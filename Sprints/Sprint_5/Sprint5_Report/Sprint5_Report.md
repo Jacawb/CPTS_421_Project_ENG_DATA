@@ -26,8 +26,8 @@ We started work on implementing this, but had to look into alternative free meth
 ## Code Files for Review
 Please review the following code files, which were actively developed during this sprint, for quality:
 
+* [App.jsx](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/tree/main/Code/Website/React_website/src)
 All of the website functionality code is in App.jsx
-* [app.py](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/blob/main/Code/TestApp/app.py)
 
 ## Retrospective Summary
 Here's what went well:
