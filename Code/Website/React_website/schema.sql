@@ -19,15 +19,17 @@ CREATE TABLE annotation_groups (
 );
 
 -- One row per individual tag (one range in one file).
+-- start_offset/end_offset both NULL = the tag applies to the whole document.
 CREATE TABLE annotations (
     id            INTEGER PRIMARY KEY,
     file_id       INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     group_id      INTEGER NOT NULL REFERENCES annotation_groups(id),
-    start_offset  INTEGER NOT NULL,
-    end_offset    INTEGER NOT NULL,   -- exclusive, UTF-16 code units (matches JS slice)
-    selected_text TEXT NOT NULL,      -- copy of the text, to detect drift
+    start_offset  INTEGER,
+    end_offset    INTEGER,            -- exclusive, UTF-16 code units (matches JS slice)
+    selected_text TEXT NOT NULL,      -- copy of the text, to detect drift ('' for whole-document)
     created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK (start_offset >= 0 AND end_offset > start_offset)
+    CHECK ((start_offset IS NULL AND end_offset IS NULL)
+           OR (start_offset >= 0 AND end_offset > start_offset))
 );
 
 CREATE INDEX idx_annotations_file  ON annotations(file_id);

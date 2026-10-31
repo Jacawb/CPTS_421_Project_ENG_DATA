@@ -19,27 +19,32 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
   try {
     // ---------- FILES ----------
     if (parts[0] === "files") {
-      // GET /api/files
+      // GET /api/files              -> metadata only
+      // GET /api/files?content=1    -> metadata + text (used to load the workspace in one request)
       if (parts.length === 1 && method === "GET") {
+        const columns = url.searchParams.get("content") === "1"
+          ? "id, name, content, size_bytes, created_at"
+          : "id, name, size_bytes, created_at";
         const { results } = await env.DB.prepare(
-          "SELECT id, name, size_bytes, created_at FROM files ORDER BY created_at DESC, id DESC"
+          `SELECT ${columns} FROM files ORDER BY created_at DESC, id DESC`
         ).all();
         return json(results);
       }
 
-      // POST /api/files?name=notes.txt   (body = raw text)
+      // POST /api/files   body: { name, content }   (JSON, so file names stay out of URLs/logs)
       if (parts.length === 1 && method === "POST") {
-        const name = (url.searchParams.get("name") ?? "").trim() || "untitled.txt";
-        const bytes = await request.arrayBuffer();
-        if (bytes.byteLength === 0) return err("Empty file");
-        if (bytes.byteLength > MAX_FILE_BYTES) return err("File too large (max 1 MB of text)", 413);
-        const content = new TextDecoder().decode(bytes);
+        const b = (await request.json()) as { name?: string; content?: string };
+        const name = (b.name ?? "").trim() || "untitled.txt";
+        const content = b.content ?? "";
+        const sizeBytes = new TextEncoder().encode(content).byteLength;
+        if (sizeBytes === 0) return err("Empty file");
+        if (sizeBytes > MAX_FILE_BYTES) return err("File too large (max 1 MB of text)", 413);
 
         const row = await env.DB
-          .prepare("INSERT INTO files (name, content, size_bytes) VALUES (?, ?, ?) RETURNING id")
-          .bind(name, content, bytes.byteLength)
-          .first<{ id: number }>();
-        return json({ id: row!.id, name, size_bytes: bytes.byteLength }, 201);
+          .prepare("INSERT INTO files (name, content, size_bytes) VALUES (?, ?, ?) RETURNING id, created_at")
+          .bind(name, content, sizeBytes)
+          .first<{ id: number; created_at: string }>();
+        return json({ id: row!.id, name, size_bytes: sizeBytes, created_at: row!.created_at }, 201);
       }
 
       const fileId = Number(parts[1]);
@@ -77,14 +82,17 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
 
       // POST /api/files/:id/annotations
       // body: { name, color, start, end, selectedText }
+      // start/end both null = a whole-document annotation.
       // Finds the group by name (case-insensitive) or creates it with the given color.
       if (parts.length === 3 && parts[2] === "annotations" && method === "POST") {
         const b = (await request.json()) as {
-          name?: string; color?: string; start?: number; end?: number; selectedText?: string;
+          name?: string; color?: string; start?: number | null; end?: number | null; selectedText?: string;
         };
         const name = (b.name ?? "").trim();
         if (!name) return err("Tag name required");
-        if (!Number.isInteger(b.start) || !Number.isInteger(b.end) || b.start! < 0 || b.end! <= b.start!)
+        const wholeDocument = b.start == null && b.end == null;
+        if (!wholeDocument &&
+            (!Number.isInteger(b.start) || !Number.isInteger(b.end) || b.start! < 0 || b.end! <= b.start!))
           return err("Invalid range");
 
         const [, ins] = await env.DB.batch([
@@ -97,7 +105,7 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
                SELECT ?, id, ?, ?, ? FROM annotation_groups WHERE name = ?
                RETURNING id, group_id`
             )
-            .bind(fileId, b.start, b.end, b.selectedText ?? "", name),
+            .bind(fileId, b.start ?? null, b.end ?? null, b.selectedText ?? "", name),
         ]);
         const row = ins.results[0] as { id: number; group_id: number } | undefined;
         if (!row) return err("Could not create annotation", 500);
@@ -130,6 +138,23 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
     }
 
     // ---------- ANNOTATIONS ----------
+    // GET /api/annotations?files=1,2,3  -> every annotation in those files, with its group
+    if (parts[0] === "annotations" && parts.length === 1 && method === "GET") {
+      const ids = (url.searchParams.get("files") ?? "").split(",").map(Number).filter(Number.isInteger);
+      if (ids.length === 0) return json([]);
+      const { results } = await env.DB
+        .prepare(
+          `SELECT a.id, a.file_id, a.group_id, a.start_offset AS start, a.end_offset AS end,
+                  a.selected_text, g.name, g.color
+           FROM annotations a JOIN annotation_groups g ON g.id = a.group_id
+           WHERE a.file_id IN (SELECT value FROM json_each(?))
+           ORDER BY a.id`
+        )
+        .bind(JSON.stringify(ids))
+        .all();
+      return json(results);
+    }
+
     // DELETE /api/annotations/:id  (also removes the group if it is now empty)
     if (parts[0] === "annotations" && parts.length === 2 && method === "DELETE") {
       const id = Number(parts[1]);
