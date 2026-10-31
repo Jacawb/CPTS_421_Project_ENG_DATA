@@ -4,24 +4,24 @@
 
 ## What's New (User Facing)
  * Website
+ * Database and File storage
  * Word Cloud Data Visualization
 
 ## Work Summary (Developer Facing)
 This sprint we created the website on Cloudflare that can now be visited, and focused on implementing more website features, including the word cloud data visualization and some back end for file storage and databases.
 
 ## Unfinished Work
-While we started work on the file storage and database, we still need to work on implementing them properly.
+We managed to finish all work we started this sprint.
 
 ## Completed Issues/User Stories
 Here are links to the issues that we completed in this sprint:
 
  * [Word Cloud Data Visualization](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/15)
+ * [Document Manager/Uploader](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/10)
 
 ## Incomplete Issues/User Stories
-Here are links to issues we worked on but did not complete in this sprint:
 
-* [Document Manager/Uploader](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/10)
-We started work on implementing this, but had to look into alternative free methods for file storage outside of Cloudflare so we had to spend more time than expected on it.
+None
 
 ## Code Files for Review
 Please review the following code files, which were actively developed during this sprint, for quality:
