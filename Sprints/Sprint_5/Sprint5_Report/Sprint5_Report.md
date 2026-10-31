@@ -1,0 +1,46 @@
+# Sprint 5 Report (10/1-10/31)
+
+## YouTube link of Sprint: 
+
+## What's New (User Facing)
+ * Website
+ * Word Cloud Data Visualization
+
+## Work Summary (Developer Facing)
+This sprint we created the website on Cloudflare that can now be visited, and focused on implementing more website features, including the word cloud data visualization and some back end for file storage and databases.
+
+## Unfinished Work
+While we started work on the file storage and database, we still need to work on implementing them properly.
+
+## Completed Issues/User Stories
+Here are links to the issues that we completed in this sprint:
+
+ * [Word Cloud Data Visualization](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/15)
+
+## Incomplete Issues/User Stories
+Here are links to issues we worked on but did not complete in this sprint:
+
+* [Document Manager/Uploader](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/10)
+We started work on implementing this, but had to look into alternative free methods for file storage outside of Cloudflare so we had to spend more time than expected on it.
+
+## Code Files for Review
+Please review the following code files, which were actively developed during this sprint, for quality:
+
+All of the website functionality code is in App.jsx
+* [app.py](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/blob/main/Code/TestApp/app.py)
+
+## Retrospective Summary
+Here's what went well:
+
+* Completed Redactor app
+* Website is up and running
+* Very close to completing all website features
+
+Here's what we'd like to improve:
+
+* Work on finishing all features
+* Streamline meetings more
+
+Here are changes we plan to implement in the next sprint:
+* Incorporate better communications between us and the client
+* Meet more often to complete last features
