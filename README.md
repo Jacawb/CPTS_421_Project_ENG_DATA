@@ -137,6 +137,7 @@ The static site is written to `Code/Website/React_website/dist/`. You can previe
   - [Sprint 2](Sprints/Sprint_2/Sprint2_Report/Sprint2_Report.md)
   - [Sprint 3](Sprints/Sprint_3/Sprint3_Report/Sprint3_Report.md)
   - [Sprint 4](Sprints/Sprint_4/Sprint4_Report/Sprint4_Report.md)
+  - [Sprint 5](Sprints/Sprint_5/Sprint5_Report/Sprint5_Report.md)
 - **Releases / downloads:** [Deployment/Releases.md](Deployment/Releases.md)
 - **Meeting minutes, slides and videos:** in each `Sprints/Sprint_N/` folder
 - **Issue tracker:** https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues
