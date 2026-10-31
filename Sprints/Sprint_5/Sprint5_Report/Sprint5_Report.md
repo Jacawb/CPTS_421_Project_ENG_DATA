@@ -11,7 +11,7 @@
 This sprint we created the website on Cloudflare that can now be visited, and focused on implementing more website features, including the word cloud data visualization and some back end for file storage and databases.
 
 ## Unfinished Work
-We managed to finish all work we started this sprint.
+We created other visualization features but still need to refine them.
 
 ## Completed Issues/User Stories
 Here are links to the issues that we completed in this sprint:
@@ -21,7 +21,7 @@ Here are links to the issues that we completed in this sprint:
 
 ## Incomplete Issues/User Stories
 
-None
+* [Data Visualizaiton](https://github.com/jjmoosman/CPTS_421_Project_ENG_DATA/issues/17)
 
 ## Code Files for Review
 Please review the following code files, which were actively developed during this sprint, for quality:
