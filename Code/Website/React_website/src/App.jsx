@@ -102,27 +102,75 @@ function getFileSpans(uploadedFiles, selectedFileIds) {
   return spans;
 }
 
-function FileSidebar({ uploadedFiles, selectedFileIds, onToggle }) {
+// File picker shared by the tools. onChange receives the new array of selected ids.
+// With `single`, clicking a file opens just that one (used by Annotate).
+// "All" / "None" apply to the files currently shown by the filter.
+function FileSidebar({ uploadedFiles, selectedFileIds, onChange, single = false }) {
+  const [filter, setFilter] = useState('');
+  const files = uploadedFiles || [];
+  const needle = filter.trim().toLowerCase();
+  const shown = needle ? files.filter(f => f.name.toLowerCase().includes(needle)) : files;
+  const shownIds = shown.map(f => f.id);
+
+  const toggle = (fileId) => onChange(
+    selectedFileIds.includes(fileId)
+      ? selectedFileIds.filter(id => id !== fileId)
+      : [...selectedFileIds, fileId]
+  );
+  const selectShown = () => onChange([...selectedFileIds, ...shownIds.filter(id => !selectedFileIds.includes(id))]);
+  const clearShown = () => onChange(selectedFileIds.filter(id => !shownIds.includes(id)));
+
   return (
     <aside className="file-list-sidebar">
-      <h3>Files</h3>
-      {uploadedFiles && uploadedFiles.length > 0 ? (
-        <ul className="file-list">
-          {uploadedFiles.map(file => (
-            <li key={file.id}>
-              <label className="file-item">
-                <input
-                  type="checkbox"
-                  checked={selectedFileIds.includes(file.id)}
-                  onChange={() => onToggle(file.id)}
-                />
-                <span className="file-name">{file.name}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      ) : (
+      <h3>{single ? 'Documents' : 'Files'}</h3>
+      {files.length === 0 ? (
         <p className="no-files">No files loaded.</p>
+      ) : (
+        <>
+          <input
+            type="search"
+            className="file-filter"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by name"
+            aria-label="Filter files by name"
+          />
+          {!single && (
+            <div className="file-list-actions">
+              <span>{selectedFileIds.length} of {files.length} selected</span>
+              <span>
+                <button type="button" onClick={selectShown}>All</button>
+                <button type="button" onClick={clearShown}>None</button>
+              </span>
+            </div>
+          )}
+          <ul className="file-list">
+            {shown.map(file => (
+              <li key={file.id}>
+                {single ? (
+                  <button
+                    type="button"
+                    className={`file-item file-open${selectedFileIds.includes(file.id) ? ' active' : ''}`}
+                    aria-pressed={selectedFileIds.includes(file.id)}
+                    onClick={() => onChange([file.id])}
+                  >
+                    <span className="file-name">{file.name}</span>
+                  </button>
+                ) : (
+                  <label className="file-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedFileIds.includes(file.id)}
+                      onChange={() => toggle(file.id)}
+                    />
+                    <span className="file-name">{file.name}</span>
+                  </label>
+                )}
+              </li>
+            ))}
+          </ul>
+          {shown.length === 0 && <p className="no-files">No files match "{filter}".</p>}
+        </>
       )}
     </aside>
   );
@@ -225,10 +273,7 @@ function KeywordContextTool({ uploadedFiles }) {
   };
 
   // After a search has been run, changing the file selection re-runs it.
-  const toggleFileSelection = (fileId) => {
-    const next = selectedFileIds.includes(fileId)
-      ? selectedFileIds.filter(id => id !== fileId)
-      : [...selectedFileIds, fileId];
+  const changeFileSelection = (next) => {
     setSelectedFileIds(next);
     if (hasSearched) runSearch(next);
     else clearResults();
@@ -337,7 +382,7 @@ function KeywordContextTool({ uploadedFiles }) {
   return (
     <ToolPage title="Keyword in Context (KWIC)" subtitle="Concordance view — each match is centered with surrounding context. Click sort buttons to reorder, or click a row to see more of the text.">
       <div className="search-panel-with-files">
-        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onToggle={toggleFileSelection} />
+        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onChange={changeFileSelection} />
         <div className="search-panel">
           <div className="search-controls">
             <label>
@@ -553,6 +598,9 @@ function buildTags(annotations, spans) {
   return [...tagsById.values()];
 }
 
+// The document last opened in Annotate, so coming back to the page reopens it.
+let lastAnnotatedFileId = null;
+
 function AnnotateTool({ uploadedFiles }) {
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [sourceText, setSourceText] = useState('');
@@ -568,15 +616,13 @@ function AnnotateTool({ uploadedFiles }) {
   const docPanelRef = useRef(null);
   const inputRef = useRef(null);
 
+  // One document is open at a time: the last one opened if it still exists, else the newest.
   useEffect(() => {
-    if (uploadedFiles && uploadedFiles.length > 0) {
-      const allIds = uploadedFiles.map(f => f.id);
-      setSelectedFileIds(allIds);
-      setSourceText(combineSelectedFiles(uploadedFiles, allIds));
-    } else {
-      setSelectedFileIds([]);
-      setSourceText('');
-    }
+    const files = uploadedFiles || [];
+    const file = files.find(f => f.id === lastAnnotatedFileId) || files[0];
+    const ids = file ? [file.id] : [];
+    setSelectedFileIds(ids);
+    setSourceText(combineSelectedFiles(files, ids));
     setPendingSelection(null);
     setActiveTagId(null);
     setActiveLocationId(null);
@@ -604,12 +650,12 @@ function AnnotateTool({ uploadedFiles }) {
     }
   }, [pendingSelection]);
 
-  const toggleFileSelection = (fileId) => {
-    const newSelection = selectedFileIds.includes(fileId)
-      ? selectedFileIds.filter(id => id !== fileId)
-      : [...selectedFileIds, fileId];
-    setSelectedFileIds(newSelection);
-    setSourceText(combineSelectedFiles(uploadedFiles, newSelection));
+  // FileSidebar in single mode passes [fileId].
+  const openFile = (ids) => {
+    if (ids[0] === selectedFileIds[0]) return;
+    lastAnnotatedFileId = ids[0];
+    setSelectedFileIds(ids);
+    setSourceText(combineSelectedFiles(uploadedFiles, ids));
     setPendingSelection(null);
     setActiveTagId(null);
     setActiveLocationId(null);
@@ -917,10 +963,10 @@ function AnnotateTool({ uploadedFiles }) {
   return (
     <ToolPage title="Annotate" subtitle="Highlight text then tag it — reuse a tag across multiple sections.">
       <div className="search-panel-with-files">
-        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onToggle={toggleFileSelection} />
+        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onChange={openFile} single />
         <div className="annotate-main">
           <div className="annotate-doc-panel" ref={docPanelRef} style={{ position: 'relative' }}>
-            <label>Document text</label>
+            <label>{uploadedFiles?.find(f => f.id === selectedFileIds[0])?.name ?? 'Document text'}</label>
             <div
               ref={textRef}
               onMouseUp={handleTextMouseUp}
@@ -928,7 +974,7 @@ function AnnotateTool({ uploadedFiles }) {
             >
               {sourceText
                 ? renderAnnotatedText()
-                : <span className="no-files">No files selected. Upload files in Document Manager.</span>
+                : <span className="no-files">No documents yet. Upload files in Document Manager.</span>
               }
             </div>
             {hoverInfo && (
@@ -955,7 +1001,7 @@ function AnnotateTool({ uploadedFiles }) {
             <div className={`annotate-selection-status${pendingSelection ? '' : ' empty'}`}>
               {pendingSelection
                 ? <>Selected: <strong>"{pendingSelection.selectedText.slice(0, 60)}{pendingSelection.selectedText.length > 60 ? '…' : ''}"</strong></>
-                : <span>No text selected — annotation will apply to the whole {selectedFileIds.length > 1 ? 'of each selected document' : 'document'}.</span>
+                : <span>No text selected — annotation will apply to the whole document.</span>
               }
             </div>
 
@@ -1076,7 +1122,6 @@ function AnnotateTool({ uploadedFiles }) {
                             {generalRanges.map(r => (
                               <li key={r.id} className="annotate-item-excerpt general">
                                 General annotation
-                                {selectedFileIds.length > 1 && ` — ${uploadedFiles.find(f => f.id === r.fileId)?.name ?? ''}`}
                                 <button
                                   className="annotate-item-delete"
                                   onClick={(e) => { e.stopPropagation(); deleteRange(tag.id, r.id); }}
@@ -1124,10 +1169,7 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
   const sourceText = combineSelectedFiles(uploadedFiles, selectedFileIds);
 
   // After a search has been run, changing the file selection re-runs it.
-  const toggleFileSelection = (fileId) => {
-    const next = selectedFileIds.includes(fileId)
-      ? selectedFileIds.filter(id => id !== fileId)
-      : [...selectedFileIds, fileId];
+  const changeFileSelection = (next) => {
     setSelectedFileIds(next);
     if (hasSearched) runSearch(next);
   };
@@ -1163,7 +1205,7 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
   return (
     <ToolPage title={title} subtitle={subtitle}>
       <div className="search-panel-with-files">
-        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onToggle={toggleFileSelection} />
+        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onChange={changeFileSelection} />
         <div className="search-panel">
           <div className="search-controls">
             <label>

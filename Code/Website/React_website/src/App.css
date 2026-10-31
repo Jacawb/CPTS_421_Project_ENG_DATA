@@ -611,6 +611,61 @@
   color: #2a3f5f;
 }
 
+.file-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.83rem;
+  border: 1px solid #c5d5f0;
+  border-radius: 0.4rem;
+}
+
+.file-list-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
+  color: #586e8c;
+}
+
+.file-list-actions button {
+  background: none;
+  border: none;
+  padding: 0 0.15rem;
+  color: var(--secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.file-list-actions button:hover {
+  text-decoration: underline;
+}
+
+.file-open {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.45rem;
+}
+
+.file-open:hover {
+  background: #e8effc;
+}
+
+.file-open.active {
+  background: #dbe7fb;
+  border-color: #9db8e8;
+}
+
+.file-open.active .file-name {
+  font-weight: 600;
+}
+
 .no-files {
   font-size: 0.83rem;
   color: #aaa;
