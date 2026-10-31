@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Route, Routes, Navigate, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { api } from './api';
 import './App.css';
 
 const tools = [
@@ -81,6 +82,24 @@ function combineSelectedFiles(uploadedFiles, selectedFileIds) {
   if (selected.length === 0) return '';
   if (selected.length === 1) return selected[0].content;
   return selected.map(f => `--- File: ${f.name} ---\n\n${f.content}`).join('\n\n');
+}
+
+// Where each selected file's content starts/ends inside combineSelectedFiles' output,
+// so offsets in the combined text can be converted to offsets within one file.
+function getFileSpans(uploadedFiles, selectedFileIds) {
+  const selected = (uploadedFiles || []).filter(f => selectedFileIds.includes(f.id));
+  if (selected.length === 1) {
+    return [{ fileId: selected[0].id, start: 0, end: selected[0].content.length }];
+  }
+  const spans = [];
+  let offset = 0;
+  selected.forEach((f, i) => {
+    if (i > 0) offset += '\n\n'.length;
+    offset += `--- File: ${f.name} ---\n\n`.length;
+    spans.push({ fileId: f.id, start: offset, end: offset + f.content.length });
+    offset += f.content.length;
+  });
+  return spans;
 }
 
 function FileSidebar({ uploadedFiles, selectedFileIds, onToggle }) {
@@ -496,15 +515,49 @@ function getMarkStyle(color, state) {
   return { backgroundColor: color.light, color: '#1f2937', border: '2px solid transparent' };
 }
 
+// Colors are saved in the database by palette name ("Blue").
+function paletteColor(name) {
+  return PALETTE.find(c => c.name === name) || PALETTE[0];
+}
+
+// Converts a saved annotation (offsets within its file) to a range in the combined text.
+function toRange(annotation, span) {
+  const located = annotation.start !== null;
+  return {
+    id: annotation.id,
+    fileId: annotation.file_id,
+    start: located ? span.start + annotation.start : null,
+    end: located ? span.start + annotation.end : null,
+    selectedText: located ? annotation.selected_text : null,
+  };
+}
+
+// Groups saved annotations into tags (one per annotation group), in creation order.
+function buildTags(annotations, spans) {
+  const spanByFile = new Map(spans.map(s => [s.fileId, s]));
+  const tagsById = new Map();
+  annotations.forEach(a => {
+    const span = spanByFile.get(a.file_id);
+    if (!span) return;
+    if (!tagsById.has(a.group_id)) {
+      tagsById.set(a.group_id, { id: a.group_id, note: a.name, color: paletteColor(a.color), ranges: [] });
+    }
+    tagsById.get(a.group_id).ranges.push(toRange(a, span));
+  });
+  return [...tagsById.values()];
+}
+
 function AnnotateTool({ uploadedFiles }) {
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [sourceText, setSourceText] = useState('');
-  const [tags, setTags] = useState([]); // [{ id, note, color, ranges: [{id, start, end, selectedText}] }]
+  const [tags, setTags] = useState([]); // [{ id: groupId, note, color, ranges: [{id: annotationId, fileId, start, end, selectedText}] }]
   const [newAnnotation, setNewAnnotation] = useState('');
   const [pendingSelection, setPendingSelection] = useState(null);
   const [activeTagId, setActiveTagId] = useState(null);
   const [activeLocationId, setActiveLocationId] = useState(null);
   const [hoverInfo, setHoverInfo] = useState(null); // { note, x, y }
+  const [saving, setSaving] = useState(false);
+  const [annotateError, setAnnotateError] = useState('');
   const textRef = useRef(null);
   const docPanelRef = useRef(null);
   const inputRef = useRef(null);
@@ -518,11 +571,26 @@ function AnnotateTool({ uploadedFiles }) {
       setSelectedFileIds([]);
       setSourceText('');
     }
-    setTags([]);
     setPendingSelection(null);
     setActiveTagId(null);
     setActiveLocationId(null);
   }, [uploadedFiles]);
+
+  // Load the saved annotations for whichever files are selected.
+  useEffect(() => {
+    setTags([]);
+    setAnnotateError('');
+    if (selectedFileIds.length === 0) return;
+    let cancelled = false;
+    api.listAnnotations(selectedFileIds)
+      .then(annotations => {
+        if (!cancelled) setTags(buildTags(annotations, getFileSpans(uploadedFiles, selectedFileIds)));
+      })
+      .catch(err => {
+        if (!cancelled) setAnnotateError(`Could not load annotations: ${err.message}`);
+      });
+    return () => { cancelled = true; };
+  }, [uploadedFiles, selectedFileIds]);
 
   useEffect(() => {
     if (pendingSelection) {
@@ -536,7 +604,6 @@ function AnnotateTool({ uploadedFiles }) {
       : [...selectedFileIds, fileId];
     setSelectedFileIds(newSelection);
     setSourceText(combineSelectedFiles(uploadedFiles, newSelection));
-    setTags([]);
     setPendingSelection(null);
     setActiveTagId(null);
     setActiveLocationId(null);
@@ -570,45 +637,94 @@ function AnnotateTool({ uploadedFiles }) {
     }
   };
 
-  const commitRange = (tagId, noteText) => {
-    const range = pendingSelection
-      ? { id: Date.now() + Math.random(), start: pendingSelection.start, end: pendingSelection.end, selectedText: pendingSelection.selectedText }
-      : { id: Date.now() + Math.random(), start: null, end: null, selectedText: null };
+  // Saves the pending selection (or, with nothing selected, a whole-document
+  // annotation on each selected file) under the tag with this name.
+  // Returns the tag's id, or null if nothing was saved.
+  const commitRange = async (noteText) => {
+    const name = noteText.trim();
+    const sameName = tags.find(t => t.note.toLowerCase() === name.toLowerCase());
+    const color = sameName ? sameName.color : PALETTE[tags.length % PALETTE.length];
+    const spans = getFileSpans(uploadedFiles, selectedFileIds);
 
-    setTags(prev => {
-      if (tagId) {
-        return prev.map(t => t.id === tagId ? { ...t, ranges: [...t.ranges, range] } : t);
+    let targets;
+    if (pendingSelection) {
+      const span = spans.find(s => pendingSelection.start >= s.start && pendingSelection.end <= s.end);
+      if (!span) {
+        setAnnotateError('Select text inside a single file (not across files or file headings).');
+        return null;
       }
-      const trimmed = noteText.trim();
-      const existing = prev.find(t => t.note.toLowerCase() === trimmed.toLowerCase());
-      if (existing) {
-        return prev.map(t => t.id === existing.id ? { ...t, ranges: [...t.ranges, range] } : t);
-      }
-      const color = PALETTE[prev.length % PALETTE.length];
-      const newTag = { id: Date.now() + Math.random(), note: trimmed, color, ranges: [range] };
-      return [...prev, newTag];
-    });
+      targets = [{
+        span,
+        start: pendingSelection.start - span.start,
+        end: pendingSelection.end - span.start,
+        selectedText: pendingSelection.selectedText,
+      }];
+    } else {
+      targets = spans.map(span => ({ span, start: null, end: null, selectedText: '' }));
+    }
+    if (targets.length === 0) return null;
 
-    setNewAnnotation('');
-    setPendingSelection(null);
-    window.getSelection()?.removeAllRanges();
+    setSaving(true);
+    setAnnotateError('');
+    try {
+      const saved = await Promise.all(targets.map(({ span, ...annotation }) =>
+        api.addAnnotation(span.fileId, { name, color: color.name, ...annotation })
+          .then(result => ({ result, span, annotation }))
+      ));
+      setTags(prev => {
+        let next = prev;
+        saved.forEach(({ result, span, annotation }) => {
+          const range = toRange({
+            id: result.id, file_id: span.fileId, start: annotation.start, end: annotation.end,
+            selected_text: annotation.selectedText,
+          }, span);
+          next = next.some(t => t.id === result.group_id)
+            ? next.map(t => t.id === result.group_id ? { ...t, ranges: [...t.ranges, range] } : t)
+            : [...next, { id: result.group_id, note: result.name, color: paletteColor(result.color), ranges: [range] }];
+        });
+        return next;
+      });
+      setNewAnnotation('');
+      setPendingSelection(null);
+      window.getSelection()?.removeAllRanges();
+      return saved[0].result.group_id;
+    } catch (err) {
+      setAnnotateError(`Could not save annotation: ${err.message}`);
+      return null;
+    } finally {
+      setSaving(false);
+    }
   };
 
   const addNewOrMatchingTag = () => {
-    if (!newAnnotation.trim()) return;
-    commitRange(null, newAnnotation);
+    if (!newAnnotation.trim() || saving) return;
+    commitRange(newAnnotation);
   };
 
-  const addToExistingTag = (tag) => {
-    commitRange(tag.id, tag.note);
-    setActiveTagId(tag.id);
+  const addToExistingTag = async (tag) => {
+    if (saving) return;
+    const tagId = await commitRange(tag.note);
+    if (tagId !== null) setActiveTagId(tagId);
   };
 
-  const updateTagColor = (tagId, color) => {
-    setTags(prev => prev.map(t => t.id === tagId ? { ...t, color } : t));
+  const updateTagColor = async (tagId, color) => {
+    setAnnotateError('');
+    try {
+      await api.setGroupColor(tagId, color.name);
+      setTags(prev => prev.map(t => t.id === tagId ? { ...t, color } : t));
+    } catch (err) {
+      setAnnotateError(`Could not change color: ${err.message}`);
+    }
   };
 
-  const deleteRange = (tagId, rangeId) => {
+  const deleteRange = async (tagId, rangeId) => {
+    setAnnotateError('');
+    try {
+      await api.deleteAnnotation(rangeId);
+    } catch (err) {
+      setAnnotateError(`Could not remove annotation: ${err.message}`);
+      return;
+    }
     setTags(prev => prev
       .map(t => t.id === tagId ? { ...t, ranges: t.ranges.filter(r => r.id !== rangeId) } : t)
       .filter(t => t.ranges.length > 0)
@@ -616,9 +732,22 @@ function AnnotateTool({ uploadedFiles }) {
     if (activeLocationId === rangeId) setActiveLocationId(null);
   };
 
-  const deleteTag = (tagId) => {
-    setTags(prev => prev.filter(t => t.id !== tagId));
-    if (activeTagId === tagId) clearActiveSelection();
+  // Removes this tag's annotations from the selected files.
+  const deleteTag = async (tag) => {
+    const count = tag.ranges.length;
+    if (!window.confirm(`Delete the tag "${tag.note}" and its ${count} annotation${count !== 1 ? 's' : ''}?`)) return;
+    setAnnotateError('');
+    const results = await Promise.allSettled(tag.ranges.map(r => api.deleteAnnotation(r.id)));
+    const failedIds = new Set(tag.ranges.filter((r, i) => results[i].status === 'rejected').map(r => r.id));
+    setTags(prev => prev
+      .map(t => t.id === tag.id ? { ...t, ranges: t.ranges.filter(r => failedIds.has(r.id)) } : t)
+      .filter(t => t.ranges.length > 0)
+    );
+    if (failedIds.size > 0) {
+      setAnnotateError(`Could not delete ${failedIds.size} annotation(s) from "${tag.note}".`);
+    } else if (activeTagId === tag.id) {
+      clearActiveSelection();
+    }
   };
 
   const jumpToLocation = (tagId, rangeId) => {
@@ -820,7 +949,7 @@ function AnnotateTool({ uploadedFiles }) {
             <div className={`annotate-selection-status${pendingSelection ? '' : ' empty'}`}>
               {pendingSelection
                 ? <>Selected: <strong>"{pendingSelection.selectedText.slice(0, 60)}{pendingSelection.selectedText.length > 60 ? '…' : ''}"</strong></>
-                : <span>No text selected — annotation will apply to the whole document.</span>
+                : <span>No text selected — annotation will apply to the whole {selectedFileIds.length > 1 ? 'of each selected document' : 'document'}.</span>
               }
             </div>
 
@@ -832,8 +961,11 @@ function AnnotateTool({ uploadedFiles }) {
                 onKeyDown={(e) => e.key === 'Enter' && addNewOrMatchingTag()}
                 placeholder="Tag name"
               />
-              <button className="run-search" type="button" onClick={addNewOrMatchingTag}>Add</button>
+              <button className="run-search" type="button" onClick={addNewOrMatchingTag} disabled={saving}>
+                {saving ? 'Saving...' : 'Add'}
+              </button>
             </div>
+            {annotateError && <div className="error">{annotateError}</div>}
 
             {pendingSelection && tags.length > 0 && (
               <div className="annotate-existing-tags">
@@ -884,7 +1016,7 @@ function AnnotateTool({ uploadedFiles }) {
                       </div>
                       <button
                         className="annotate-item-delete"
-                        onClick={(e) => { e.stopPropagation(); deleteTag(tag.id); }}
+                        onClick={(e) => { e.stopPropagation(); deleteTag(tag); }}
                       >
                         Delete tag
                       </button>
@@ -938,6 +1070,7 @@ function AnnotateTool({ uploadedFiles }) {
                             {generalRanges.map(r => (
                               <li key={r.id} className="annotate-item-excerpt general">
                                 General annotation
+                                {selectedFileIds.length > 1 && ` — ${uploadedFiles.find(f => f.id === r.fileId)?.name ?? ''}`}
                                 <button
                                   className="annotate-item-delete"
                                   onClick={(e) => { e.stopPropagation(); deleteRange(tag.id, r.id); }}
@@ -1212,41 +1345,64 @@ function DataVisualizationTool({ uploadedFiles }) {
   );
 }
 
-function DocumentManager({ setUploadedFiles }) {
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => resolve(event.target.result || '');
+    reader.onerror = () => reject(new Error('could not read file'));
+    reader.readAsText(file);
+  });
+}
+
+function formatFileSize(bytes) {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+// D1 stores CURRENT_TIMESTAMP as UTC "YYYY-MM-DD HH:MM:SS".
+function formatSavedDate(createdAt) {
+  if (!createdAt) return '';
+  return new Date(`${createdAt.replace(' ', 'T')}Z`).toLocaleDateString();
+}
+
+function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const loadFiles = (files) => {
-    if (!files || files.length === 0) return;
-    const validFiles = Array.from(files).filter(file =>
+  const loadFiles = async (selectedFiles) => {
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    const validFiles = Array.from(selectedFiles).filter(file =>
       file.type.includes('text') || file.name.endsWith('.txt')
     );
     if (validFiles.length === 0) {
       setError('Please select only plain text (.txt) files.');
       return;
     }
-    let loadedCount = 0;
-    const fileArray = [];
-    validFiles.forEach((file, index) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        fileArray[index] = { name: file.name, content: event.target.result || '' };
-        loadedCount += 1;
-        if (loadedCount === validFiles.length) {
-          setUploadedFiles(fileArray.map((item, idx) => ({
-            id: idx,
-            name: item.name,
-            content: item.content,
-            selected: true,
-          })));
-          setStatus(`Loaded ${validFiles.length} file(s)`);
-          setError('');
-        }
-      };
-      reader.onerror = () => setError(`Error reading file: ${file.name}`);
-      reader.readAsText(file);
-    });
+    setLoading(true);
+    setStatus(`Saving ${validFiles.length} file(s)...`);
+    const failures = [];
+    for (const file of validFiles) {
+      try {
+        await saveFile(file.name, await readFileAsText(file));
+      } catch (err) {
+        failures.push(`${file.name} (${err.message})`);
+      }
+    }
+    const savedCount = validFiles.length - failures.length;
+    setStatus(savedCount > 0 ? `Saved ${savedCount} file(s)` : '');
+    setError(failures.length > 0 ? `Could not save: ${failures.join('; ')}` : '');
+    setLoading(false);
+  };
+
+  const deleteFile = async (file) => {
+    if (!window.confirm(`Delete "${file.name}" and all of its annotations? This cannot be undone.`)) return;
+    setError(''); setStatus('');
+    try {
+      await removeFile(file.id);
+      setStatus(`Deleted ${file.name}`);
+    } catch (err) {
+      setError(`Could not delete ${file.name}: ${err.message}`);
+    }
   };
 
   const loadFromUrl = async (url, name) => {
@@ -1257,8 +1413,8 @@ function DocumentManager({ setUploadedFiles }) {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Fetch failed with ${response.status}`);
       const text = await response.text();
-      setUploadedFiles([{ id: 0, name, content: text, selected: true }]);
-      setStatus(`Loaded OneDrive file: ${name}`);
+      await saveFile(name, text);
+      setStatus(`Saved OneDrive file: ${name}`);
     } catch (err) {
       setError(`Unable to load file from OneDrive: ${err.message}`);
     } finally {
@@ -1307,12 +1463,12 @@ function DocumentManager({ setUploadedFiles }) {
   };
 
   return (
-    <ToolPage title="Document Manager" subtitle="Select documents from local storage or OneDrive to use in the keyword and annotation tools.">
+    <ToolPage title="Document Manager" subtitle="Upload documents to save them for the keyword and annotation tools. Saved documents stay after a refresh.">
       <div className="doc-manager-grid">
         <div className="doc-manager-card" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
           <h3>Local files</h3>
           <p>Upload one or more plain text documents from your computer.</p>
-          <input type="file" accept=".txt,text/plain" onChange={onSelectFile} multiple />
+          <input type="file" accept=".txt,text/plain" onChange={onSelectFile} multiple disabled={loading} />
         </div>
         <div className="doc-manager-card">
           <h3>OneDrive</h3>
@@ -1326,12 +1482,51 @@ function DocumentManager({ setUploadedFiles }) {
         {status && <div className="status-message">{status}</div>}
         {error && <div className="error">{error}</div>}
       </div>
+
+      <div className="doc-manager-card doc-manager-saved">
+        <h3>Saved documents ({files.length})</h3>
+        {libraryStatus.loading && <p>Loading saved documents...</p>}
+        {libraryStatus.error && <div className="error">{libraryStatus.error}</div>}
+        {!libraryStatus.loading && !libraryStatus.error && files.length === 0 && <p>No documents saved yet.</p>}
+        {files.length > 0 && (
+          <ul className="saved-file-list">
+            {files.map(file => (
+              <li key={file.id}>
+                <span className="file-name">{file.name}</span>
+                <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
+                <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </ToolPage>
   );
 }
 
 export default function App() {
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [libraryStatus, setLibraryStatus] = useState({ loading: true, error: '' });
+
+  // Load every saved document (with its text) once, so all tools can use them.
+  useEffect(() => {
+    api.listFilesWithContent()
+      .then(files => {
+        setUploadedFiles(files);
+        setLibraryStatus({ loading: false, error: '' });
+      })
+      .catch(err => setLibraryStatus({ loading: false, error: `Could not load saved documents: ${err.message}` }));
+  }, []);
+
+  const saveFile = async (name, content) => {
+    const saved = await api.uploadFile(name, content);
+    setUploadedFiles(prev => [{ ...saved, content }, ...prev]);
+  };
+
+  const removeFile = async (id) => {
+    await api.deleteFile(id);
+    setUploadedFiles(prev => prev.filter(f => f.id !== id));
+  };
 
   return (
     <div className="layout">
@@ -1352,7 +1547,10 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/document-manager" element={<DocumentManager setUploadedFiles={setUploadedFiles} />} />
+          <Route
+            path="/document-manager"
+            element={<DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile} removeFile={removeFile} />}
+          />
           <Route path="/keyword-context" element={<KeywordContextTool uploadedFiles={uploadedFiles} />} />
           <Route path="/annotate" element={<AnnotateTool uploadedFiles={uploadedFiles} />} />
           <Route path="/data-visualization" element={<DataVisualizationTool uploadedFiles={uploadedFiles} />} />          <Route path="*" element={<h2>Page not found</h2>} />
