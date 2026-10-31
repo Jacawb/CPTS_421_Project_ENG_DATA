@@ -1,11 +1,12 @@
--- Run once:  npx wrangler d1 execute annotator-db --file=schema.sql --remote
--- If you already created the earlier tables and have no data yet, drop them first:
+-- Run once:  npx wrangler d1 execute database --file=schema.sql --remote
+--   (or paste into Cloudflare dashboard -> D1 -> database -> Console)
+-- WARNING: the DROP lines below delete ALL data. Only run this on an empty database.
 DROP TABLE IF EXISTS annotations; DROP TABLE IF EXISTS annotation_groups; DROP TABLE IF EXISTS files;
 
 CREATE TABLE files (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL,
-    r2_key     TEXT NOT NULL,          -- sha256 hex of the content = R2 object key
+    content    TEXT NOT NULL,          -- the file's plain text (D1 caps a value at ~2 MB; API allows 1 MB)
     size_bytes INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

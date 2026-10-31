@@ -1,18 +1,14 @@
 // functions/api/[[path]].ts  -> handles every request under /api/*
-// Bindings required (Pages project -> Settings -> Bindings): DB (D1), FILES (R2)
+// Bindings required (Pages project -> Settings -> Bindings): DB (D1)
 
 interface Env {
   DB: D1Database;
-  FILES: R2Bucket;
 }
+
+const MAX_FILE_BYTES = 1_000_000; // D1 caps a single value at ~2 MB
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status = 400) => json({ error: message }, status);
-
-async function sha256Hex(buf: ArrayBuffer): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", buf);
-  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 export const onRequest = async ({ request, env }: { request: Request; env: Env }) => {
   const url = new URL(request.url);
@@ -36,12 +32,12 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
         const name = (url.searchParams.get("name") ?? "").trim() || "untitled.txt";
         const bytes = await request.arrayBuffer();
         if (bytes.byteLength === 0) return err("Empty file");
-        const key = await sha256Hex(bytes);
+        if (bytes.byteLength > MAX_FILE_BYTES) return err("File too large (max 1 MB of text)", 413);
+        const content = new TextDecoder().decode(bytes);
 
-        await env.FILES.put(key, bytes); // blob first; same content = same key, safe to retry
         const row = await env.DB
-          .prepare("INSERT INTO files (name, r2_key, size_bytes) VALUES (?, ?, ?) RETURNING id")
-          .bind(name, key, bytes.byteLength)
+          .prepare("INSERT INTO files (name, content, size_bytes) VALUES (?, ?, ?) RETURNING id")
+          .bind(name, content, bytes.byteLength)
           .first<{ id: number }>();
         return json({ id: row!.id, name, size_bytes: bytes.byteLength }, 201);
       }
@@ -52,7 +48,7 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
       // GET /api/files/:id  -> file + content + annotations
       if (parts.length === 2 && method === "GET") {
         const [fileRes, annRes] = await env.DB.batch([
-          env.DB.prepare("SELECT id, name, r2_key FROM files WHERE id = ?").bind(fileId),
+          env.DB.prepare("SELECT id, name, content FROM files WHERE id = ?").bind(fileId),
           env.DB
             .prepare(
               `SELECT a.id, a.group_id, a.start_offset AS start, a.end_offset AS end,
@@ -62,29 +58,20 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
             )
             .bind(fileId),
         ]);
-        const file = fileRes.results[0] as { id: number; name: string; r2_key: string } | undefined;
+        const file = fileRes.results[0] as { id: number; name: string; content: string } | undefined;
         if (!file) return err("Not found", 404);
-        const obj = await env.FILES.get(file.r2_key);
-        const content = obj ? await obj.text() : null;
-        return json({ id: file.id, name: file.name, content, annotations: annRes.results });
+        return json({ id: file.id, name: file.name, content: file.content, annotations: annRes.results });
       }
 
       // DELETE /api/files/:id
       if (parts.length === 2 && method === "DELETE") {
-        const file = await env.DB.prepare("SELECT r2_key FROM files WHERE id = ?")
-          .bind(fileId)
-          .first<{ r2_key: string }>();
-        if (!file) return err("Not found", 404);
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM files WHERE id = ?").bind(fileId), // cascades to annotations
+        const [del] = await env.DB.batch([
+          env.DB.prepare("DELETE FROM files WHERE id = ? RETURNING id").bind(fileId), // cascades to annotations
           env.DB.prepare(
             "DELETE FROM annotation_groups WHERE id NOT IN (SELECT DISTINCT group_id FROM annotations)"
           ),
         ]);
-        const shared = await env.DB.prepare("SELECT COUNT(*) AS n FROM files WHERE r2_key = ?")
-          .bind(file.r2_key)
-          .first<{ n: number }>();
-        if (shared!.n === 0) await env.FILES.delete(file.r2_key);
+        if (del.results.length === 0) return err("Not found", 404);
         return json({ deleted: true });
       }
 
