@@ -1323,8 +1323,7 @@ function DataVisualizationTool({ uploadedFiles }) {
         );
       }
       const maxFreq = Math.max(...wordData.map(w => w.value));
-      const colors = ['#0f66d0', '#e14f56', '#406b99', '#5d92dd', '#0a4ca3', '#c75a5a', '#2a5fb8', '#d44949', '#8b9fc9', '#6b8cc9'];
-      const rotations = [-10, -5, 0, 5, 10];
+      const colors = ['#a33338', '#238c2d', '#1768c4', '#8700a8', '#a33338', '#238c2d', '#1768c4'];
       return (
         <div className="wordcloud-container">
           {wordData.map((word, idx) => {
@@ -1335,10 +1334,9 @@ function DataVisualizationTool({ uploadedFiles }) {
                 className="wordcloud-word"
                 title={`${word.text}: ${word.value} occurrences`}
                 style={{
-                  fontSize: `${14 + sizeMultiplier * 36}px`,
+                  fontSize: `${12 + Math.pow(sizeMultiplier, 0.65) * 68}px`,
                   color: colors[idx % colors.length],
-                  fontWeight: 400 + Math.floor(sizeMultiplier * 400),
-                  transform: `rotate(${rotations[idx % rotations.length]}deg)`,
+                  fontWeight: sizeMultiplier > 0.55 ? 700 : 500,
                 }}
               >
                 {word.text}
