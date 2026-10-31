@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Route, Routes, Navigate, useNavigate } from 'react-router-dom';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { api } from './api';
 import './App.css';
 
@@ -1372,19 +1372,43 @@ function DataVisualizationTool({ uploadedFiles }) {
     }
 
     if (chartType === 'line') {
-      const lineData = Array.from({ length: Math.min(results.length, 20) }, (_, i) => ({
-        position: i + 1,
-        count: i + 1,
+      const lineQueries = queries.length > 0
+        ? queries
+        : [...new Set(results.map(result => result.query).filter(Boolean))];
+      const series = lineQueries.map((searchQuery, index) => ({
+        searchQuery,
+        dataKey: `query${index}`,
+        matches: results.filter(result => result.query === searchQuery),
       }));
+      const occurrenceCount = Math.max(...series.map(item => item.matches.length));
+      const lineData = Array.from({ length: occurrenceCount }, (_, index) => {
+        const point = { occurrence: index + 1 };
+        series.forEach(({ dataKey, matches }) => {
+          if (matches[index]) point[dataKey] = matches[index].start;
+        });
+        return point;
+      });
+      const lineColors = ['#e14f56', '#0f66d0', '#238c2d', '#8700a8', '#e58a16'];
       return (
         <div style={{ width: '100%', height: 300 }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={lineData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="position" />
-              <YAxis />
+              <XAxis dataKey="occurrence" />
+              <YAxis tickFormatter={value => value.toLocaleString()} />
               <Tooltip />
-              <Line type="monotone" dataKey="count" stroke="#e14f56" dot={{ r: 3 }} />
+              {series.map(({ searchQuery, dataKey }, index) => (
+                <Line
+                  key={dataKey}
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={searchQuery}
+                  stroke={lineColors[index % lineColors.length]}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              ))}
+              {series.length > 1 && <Legend />}
             </LineChart>
           </ResponsiveContainer>
         </div>
