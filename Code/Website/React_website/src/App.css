@@ -781,22 +781,31 @@
 
 /* Word cloud */
 .wordcloud-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.8rem;
-  align-items: center;
-  padding: 0.5rem;
+  position: relative;
+  width: 100%;
+  height: min(72vh, 620px);
+  min-height: 520px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 0.75rem;
 }
 
 .wordcloud-word {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   display: inline-block;
-  line-height: 1.2;
+  line-height: 1;
+  white-space: nowrap;
+  font-family: Arial, sans-serif;
   cursor: default;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s ease, filter 0.15s ease;
 }
 
 .wordcloud-word:hover {
-  opacity: 0.75;
+  opacity: 1;
+  filter: saturate(1.2);
 }
 
 /* Results table */

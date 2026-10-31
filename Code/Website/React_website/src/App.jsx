@@ -79,7 +79,560 @@ function generateWordFrequency(text) {
     .slice(0, 100);
 }
 
+<<<<<<< Updated upstream
 function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
+=======
+function createWordCloudLayout(words, width, height) {
+  if (!width || !height) return [];
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Unable to measure word cloud text.');
+
+  const maxFrequency = Math.max(...words.map(word => word.value), 1);
+  const maxFontSize = Math.min(112, width * 0.15);
+  const minFontSize = 12;
+  const colors = ['#737900', '#f07800', '#79002b', '#1b5792', '#4b7028', '#c35d28', '#f0cc00', '#394d0c'];
+  const placed = [];
+
+  words.forEach((word, index) => {
+    const weight = Math.min(900, 700 + Math.round((word.value / maxFrequency) * 200));
+    const ratio = Math.pow(word.value / maxFrequency, 0.68);
+    let fontSize = minFontSize + ratio * (maxFontSize - minFontSize);
+    let position = null;
+
+    for (let attempt = 0; attempt < 12 && !position; attempt += 1) {
+      context.font = `${weight} ${fontSize}px Arial, sans-serif`;
+      const textWidth = context.measureText(word.text).width;
+      const textHeight = fontSize * 1.05;
+      const boxWidth = textWidth;
+      const boxHeight = textHeight;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const spacing = 4;
+      const maxRadius = Math.ceil(Math.hypot(width, height));
+
+      if (boxWidth <= width - 12 && boxHeight <= height - 12) {
+        for (let radius = 0; radius <= maxRadius && !position; radius += spacing) {
+          const offsets = [];
+          if (radius === 0) {
+            offsets.push([0, 0]);
+          } else {
+            for (let offset = -radius; offset <= radius; offset += spacing) {
+              offsets.push([offset, -radius]);
+              offsets.push([radius, offset]);
+              offsets.push([-offset, radius]);
+              offsets.push([-radius, -offset]);
+            }
+          }
+
+          for (const [offsetX, offsetY] of offsets) {
+            const left = centerX + offsetX - boxWidth / 2;
+            const top = centerY + offsetY - boxHeight / 2;
+            const candidate = { left, top, width: boxWidth, height: boxHeight };
+            if (
+              left >= 6 &&
+              top >= 6 &&
+              left + boxWidth <= width - 6 &&
+              top + boxHeight <= height - 6 &&
+              placed.every(existing =>
+                candidate.left + candidate.width + 3 <= existing.left ||
+                existing.left + existing.width + 3 <= candidate.left ||
+                candidate.top + candidate.height + 3 <= existing.top ||
+                existing.top + existing.height + 3 <= candidate.top
+              )
+            ) {
+              position = candidate;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!position) fontSize = Math.max(minFontSize, fontSize * 0.8);
+    }
+
+    if (position) {
+      placed.push(position);
+      word.layout = {
+        ...position,
+        fontSize,
+        weight,
+        color: colors[index % colors.length],
+      };
+    }
+  });
+
+  return words.filter(word => word.layout);
+}
+
+function WordCloud({ words }) {
+  const containerRef = useRef(null);
+  const [layout, setLayout] = useState([]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const updateLayout = () => {
+      const { width, height } = container.getBoundingClientRect();
+      const cloudWords = words.map(({ text, value }) => ({ text, value }));
+      setLayout(createWordCloudLayout(cloudWords, width, height));
+    };
+
+    updateLayout();
+    const observer = new ResizeObserver(updateLayout);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [words]);
+
+  return (
+    <div ref={containerRef} className="wordcloud-container" aria-label="word cloud">
+      {layout.map(word => (
+        <span
+          key={word.text}
+          className="wordcloud-word"
+          title={`${word.text}: ${word.value} occurrences`}
+          style={{
+            left: `${word.layout.left + word.layout.width / 2}px`,
+            top: `${word.layout.top + word.layout.height / 2}px`,
+            fontSize: `${word.layout.fontSize}px`,
+            color: word.layout.color,
+            fontWeight: word.layout.weight,
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          {word.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function combineSelectedFiles(uploadedFiles, selectedFileIds) {
+  if (!uploadedFiles || uploadedFiles.length === 0) return '';
+  const selected = uploadedFiles.filter(f => selectedFileIds.includes(f.id));
+  if (selected.length === 0) return '';
+  if (selected.length === 1) return selected[0].content;
+  return selected.map(f => `--- File: ${f.name} ---\n\n${f.content}`).join('\n\n');
+}
+
+function FileSidebar({ uploadedFiles, selectedFileIds, onToggle }) {
+  return (
+    <aside className="file-list-sidebar">
+      <h3>Files</h3>
+      {uploadedFiles && uploadedFiles.length > 0 ? (
+        <ul className="file-list">
+          {uploadedFiles.map(file => (
+            <li key={file.id}>
+              <label className="file-item">
+                <input
+                  type="checkbox"
+                  checked={selectedFileIds.includes(file.id)}
+                  onChange={() => onToggle(file.id)}
+                />
+                <span className="file-name">{file.name}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="no-files">No files loaded.</p>
+      )}
+    </aside>
+  );
+}
+
+// KWIC (Keyword in Context) concordance tool, modeled after AntConc's Concordance view.
+const KWIC_MAX_CONTEXT = 20;       // upper bound for the "Context words" input
+const KWIC_CONTEXT_CHARS = 400;    // characters scanned on each side of a hit (enough for 20 words)
+const KWIC_EXPANDED_CHARS = 600;   // characters shown on each side when a row is expanded
+const KWIC_MAX_HITS = 50000;       // stop collecting after this many hits
+const KWIC_PAGE_SIZE = 500;        // rows rendered at a time
+
+// Survives navigating away from the page and back (but not a reload).
+const kwicCache = {};
+
+function usePersistentState(key, initial) {
+  const [value, setValue] = useState(() => (key in kwicCache ? kwicCache[key] : initial));
+  useEffect(() => { kwicCache[key] = value; }, [key, value]);
+  return [value, setValue];
+}
+
+// Lowercase and strip surrounding punctuation so "man," and "man" sort together.
+function normalizeWord(word) {
+  return (word || '').toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+}
+
+function findKwicHits(files, regexp) {
+  const hits = [];
+  let truncated = false;
+  files.forEach((file, fileIndex) => {
+    const text = file.content || '';
+    regexp.lastIndex = 0;
+    let match;
+    while ((match = regexp.exec(text)) !== null) {
+      if (hits.length >= KWIC_MAX_HITS) { truncated = true; break; }
+      const start = match.index;
+      const end = start + match[0].length;
+      const leftFrom = Math.max(0, start - KWIC_CONTEXT_CHARS);
+      const rightTo = Math.min(text.length, end + KWIC_CONTEXT_CHARS);
+      const leftWords = text.slice(leftFrom, start).split(/\s+/).filter(Boolean);
+      const rightWords = text.slice(end, rightTo).split(/\s+/).filter(Boolean);
+      // The window edges may cut a word in half; drop those partial words.
+      if (leftFrom > 0 && leftWords.length > KWIC_MAX_CONTEXT) leftWords.shift();
+      if (rightTo < text.length && rightWords.length > KWIC_MAX_CONTEXT) rightWords.pop();
+      hits.push({
+        id: hits.length,
+        fileId: file.id,
+        fileName: file.name,
+        fileIndex,
+        start,
+        end,
+        keyword: match[0],
+        leftWords: leftWords.slice(-KWIC_MAX_CONTEXT),
+        rightWords: rightWords.slice(0, KWIC_MAX_CONTEXT),
+      });
+      if (match[0].length === 0) regexp.lastIndex += 1;
+    }
+  });
+  return { hits, truncated };
+}
+
+function csvCell(value) {
+  const s = String(value ?? '');
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function KeywordContextTool({ uploadedFiles }) {
+  const [filesRef, setFilesRef] = usePersistentState('filesRef', null);
+  const [selectedFileIds, setSelectedFileIds] = usePersistentState('selectedFileIds', []);
+  const [query, setQuery] = usePersistentState('query', '');
+  const [isRegex, setIsRegex] = usePersistentState('isRegex', false);
+  const [caseSensitive, setCaseSensitive] = usePersistentState('caseSensitive', false);
+  const [wholeWord, setWholeWord] = usePersistentState('wholeWord', false);
+  const [contextInput, setContextInput] = usePersistentState('contextInput', '5');
+  const [results, setResults] = usePersistentState('results', []);
+  const [message, setMessage] = usePersistentState('message', null); // { kind: 'error' | 'info', text }
+  const [sortBy, setSortBy] = usePersistentState('sortBy', 'position');
+  const [sortDir, setSortDir] = usePersistentState('sortDir', 'asc');
+  const [visibleCount, setVisibleCount] = useState(KWIC_PAGE_SIZE);
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Reset only when the loaded files actually change, not on every visit to the page.
+  useEffect(() => {
+    if (filesRef === uploadedFiles) return;
+    setFilesRef(uploadedFiles);
+    setSelectedFileIds((uploadedFiles || []).map(f => f.id));
+    setResults([]);
+    setMessage(null);
+  }, [uploadedFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const contextWords = Math.max(1, Math.min(KWIC_MAX_CONTEXT, Number(contextInput) || 1));
+  const multiFile = new Set(results.map(r => r.fileId)).size > 1 || selectedFileIds.length > 1;
+
+  const clearResults = () => {
+    setResults([]);
+    setMessage(null);
+    setExpandedId(null);
+  };
+
+  const toggleFileSelection = (fileId) => {
+    setSelectedFileIds(prev =>
+      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+    );
+    clearResults();
+  };
+
+  const runSearch = () => {
+    clearResults();
+    setVisibleCount(KWIC_PAGE_SIZE);
+    if (!query.trim()) return;
+    const files = (uploadedFiles || []).filter(f => selectedFileIds.includes(f.id));
+    if (files.length === 0) { setMessage({ kind: 'error', text: 'No files selected.' }); return; }
+    let regexp;
+    try {
+      let pattern = isRegex ? query : escapeRegExp(query);
+      if (wholeWord) pattern = `(?<!\\w)(?:${pattern})(?!\\w)`;
+      regexp = new RegExp(pattern, caseSensitive ? 'gm' : 'gim');
+    } catch (e) {
+      setMessage({ kind: 'error', text: 'Invalid regex: ' + e.message });
+      return;
+    }
+    const { hits, truncated } = findKwicHits(files, regexp);
+    setResults(hits);
+    if (hits.length === 0) setMessage({ kind: 'info', text: 'No matches found.' });
+    else if (truncated) setMessage({ kind: 'info', text: `Showing the first ${KWIC_MAX_HITS.toLocaleString()} hits. Narrow your search to see the rest.` });
+  };
+
+  const wordAt = (words, n) =>
+    normalizeWord(n > 0 ? words[n - 1] : words[words.length + n]);
+
+  const sortKey = (item) => {
+    switch (sortBy) {
+      case 'file': return item.fileName.toLowerCase();
+      case 'keyword': return item.keyword.toLowerCase();
+      case '1L': return wordAt(item.leftWords, -1);
+      case '2L': return wordAt(item.leftWords, -2);
+      case '1R': return wordAt(item.rightWords, 1);
+      case '2R': return wordAt(item.rightWords, 2);
+      default: return null;
+    }
+  };
+
+  const sortedResults = [...results].sort((a, b) => {
+    const ka = sortKey(a);
+    const kb = sortKey(b);
+    let cmp = ka === null ? 0 : ka.localeCompare(kb);
+    // Ties (and "position" sort) fall back to document order.
+    if (cmp === 0) cmp = a.fileIndex - b.fileIndex || a.start - b.start;
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  const toggleSort = (col) => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('asc'); }
+  };
+
+  const sortColumns = ['position', ...(multiFile ? ['file'] : []), '2L', '1L', 'keyword', '1R', '2R'];
+  const sortLabel = (col) => ({ position: '#', file: 'File', keyword: 'Keyword' }[col] || col);
+
+  const exportCsv = () => {
+    const rows = [['#', 'File', 'Left context', 'Keyword', 'Right context']];
+    sortedResults.forEach((item, idx) => {
+      rows.push([
+        idx + 1,
+        item.fileName,
+        item.leftWords.slice(-contextWords).join(' '),
+        item.keyword,
+        item.rightWords.slice(0, contextWords).join(' '),
+      ]);
+    });
+    const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kwic-${query.replace(/[^\w-]+/g, '_').slice(0, 40) || 'results'}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const expandedContext = (item) => {
+    const file = (uploadedFiles || []).find(f => f.id === item.fileId);
+    const text = file?.content || '';
+    const from = Math.max(0, item.start - KWIC_EXPANDED_CHARS);
+    const to = Math.min(text.length, item.end + KWIC_EXPANDED_CHARS);
+    return {
+      before: (from > 0 ? '…' : '') + text.slice(from, item.start),
+      keyword: text.slice(item.start, item.end),
+      after: text.slice(item.end, to) + (to < text.length ? '…' : ''),
+    };
+  };
+
+  // Summary: hits per file and distinct matched forms.
+  const perFile = {};
+  const forms = {};
+  results.forEach(r => {
+    perFile[r.fileName] = (perFile[r.fileName] || 0) + 1;
+    const form = caseSensitive ? r.keyword : r.keyword.toLowerCase();
+    forms[form] = (forms[form] || 0) + 1;
+  });
+  const formList = Object.entries(forms).sort((a, b) => b[1] - a[1]);
+
+  const columnCount = multiFile ? 5 : 4;
+  const visibleResults = sortedResults.slice(0, visibleCount);
+
+  return (
+    <ToolPage title="Keyword in Context (KWIC)" subtitle="Concordance view — each match is centered with surrounding context. Click sort buttons to reorder, or click a row to see more of the text.">
+      <div className="search-panel-with-files">
+        <FileSidebar uploadedFiles={uploadedFiles} selectedFileIds={selectedFileIds} onToggle={toggleFileSelection} />
+        <div className="search-panel">
+          <div className="search-controls">
+            <label>
+              Search query
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+                placeholder="word or regex"
+              />
+            </label>
+            <label>
+              Context words
+              <input
+                type="number"
+                min={1}
+                max={KWIC_MAX_CONTEXT}
+                value={contextInput}
+                onChange={(e) => setContextInput(e.target.value)}
+                onBlur={() => setContextInput(String(contextWords))}
+                style={{ width: '4.5rem' }}
+              />
+            </label>
+            <label className="kwic-check">
+              <input type="checkbox" checked={isRegex} onChange={(e) => setIsRegex(e.target.checked)} />
+              Use regex
+            </label>
+            <label className="kwic-check">
+              <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
+              Case sensitive
+            </label>
+            <label className="kwic-check">
+              <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} />
+              Whole word
+            </label>
+            <button className="run-search" onClick={runSearch} type="button">Search</button>
+          </div>
+
+          <div className="kwic-results">
+            <div className="kwic-header">
+              <h3>Concordance — {results.length.toLocaleString()} hit{results.length !== 1 ? 's' : ''}</h3>
+              {results.length > 0 && (
+                <>
+                  <div className="kwic-sort-row">
+                    <span>Sort:</span>
+                    {sortColumns.map(col => (
+                      <button
+                        key={col}
+                        onClick={() => toggleSort(col)}
+                        className={`kwic-sort-btn${sortBy === col ? ' active' : ''}`}
+                        type="button"
+                      >
+                        {sortLabel(col)}
+                        {sortBy === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="kwic-sort-btn kwic-export" onClick={exportCsv} type="button">Export CSV</button>
+                </>
+              )}
+            </div>
+
+            {message && <div className={message.kind === 'error' ? 'error' : 'kwic-info'}>{message.text}</div>}
+
+            {results.length > 0 && (
+              <details className="kwic-summary">
+                <summary>
+                  {Object.keys(perFile).length} file{Object.keys(perFile).length !== 1 ? 's' : ''} · {formList.length} distinct form{formList.length !== 1 ? 's' : ''}
+                </summary>
+                <div className="kwic-summary-body">
+                  <div>
+                    <h4>Hits per file</h4>
+                    <ul>
+                      {Object.entries(perFile).map(([name, count]) => (
+                        <li key={name}><span>{name}</span><span>{count}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>Matched forms</h4>
+                    <ul>
+                      {formList.slice(0, 50).map(([form, count]) => (
+                        <li key={form}><span>{form}</span><span>{count}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {results.length > 0 && (
+              <div className="kwic-table-wrap">
+                <table className="kwic-table">
+                  <thead>
+                    <tr>
+                      <th className="kwic-num">#</th>
+                      {multiFile && <th>File</th>}
+                      <th className="kwic-left">Left context</th>
+                      <th className="kwic-keyword">Keyword</th>
+                      <th className="kwic-right">Right context</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleResults.map((item, idx) => (
+                      <React.Fragment key={item.id}>
+                        <tr
+                          className={`kwic-row${expandedId === item.id ? ' expanded' : ''}`}
+                          onClick={() => setExpandedId(id => id === item.id ? null : item.id)}
+                        >
+                          <td className="kwic-num">{idx + 1}</td>
+                          {multiFile && <td className="kwic-file" title={item.fileName}>{item.fileName}</td>}
+                          <td className="kwic-left"><span>{item.leftWords.slice(-contextWords).join(' ')}</span></td>
+                          <td className="kwic-keyword">{item.keyword}</td>
+                          <td className="kwic-right">{item.rightWords.slice(0, contextWords).join(' ')}</td>
+                        </tr>
+                        {expandedId === item.id && (() => {
+                          const ctx = expandedContext(item);
+                          return (
+                            <tr className="kwic-expanded">
+                              <td colSpan={columnCount}>
+                                <div className="kwic-expanded-meta">{item.fileName} · character {item.start.toLocaleString()}</div>
+                                <div className="kwic-expanded-text">
+                                  {ctx.before}<mark>{ctx.keyword}</mark>{ctx.after}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })()}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {sortedResults.length > visibleCount && (
+              <button
+                className="kwic-sort-btn kwic-more"
+                type="button"
+                onClick={() => setVisibleCount(c => c + KWIC_PAGE_SIZE)}
+              >
+                Show more ({(sortedResults.length - visibleCount).toLocaleString()} remaining)
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </ToolPage>
+  );
+}
+
+const PALETTE = [
+  { name: 'Yellow', light: '#fef9c3', medium: '#fde047', dark: '#ca8a04', darkText: '#fff' },
+  { name: 'Green',  light: '#dcfce7', medium: '#86efac', dark: '#16a34a', darkText: '#fff' },
+  { name: 'Blue',   light: '#dbeafe', medium: '#93c5fd', dark: '#2563eb', darkText: '#fff' },
+  { name: 'Pink',   light: '#fce7f3', medium: '#f9a8d4', dark: '#db2777', darkText: '#fff' },
+  { name: 'Purple', light: '#ede9fe', medium: '#c4b5fd', dark: '#7c3aed', darkText: '#fff' },
+  { name: 'Orange', light: '#ffedd5', medium: '#fdba74', dark: '#ea580c', darkText: '#fff' },
+  { name: 'Teal',   light: '#ccfbf1', medium: '#5eead4', dark: '#0d9488', darkText: '#fff' },
+  { name: 'Red',    light: '#fee2e2', medium: '#fca5a5', dark: '#dc2626', darkText: '#fff' },
+];
+
+const PENDING_STYLE = {
+  backgroundColor: '#fde68a',
+  border: '2px dashed #b45309',
+  color: '#1f2937',
+};
+
+// Three states: unselected (light, no border), tagActive (medium + dashed
+// border — this highlight belongs to the selected tag, but isn't the
+// specific location currently focused), locationActive (dark + dashed
+// border — this exact highlight is the one currently selected).
+function getMarkStyle(color, state) {
+  if (state === 'locationActive') {
+    return { backgroundColor: color.dark, color: color.darkText, border: `2px dashed ${color.light}` };
+  }
+  if (state === 'tagActive') {
+    return { backgroundColor: color.medium, color: '#1f2937', border: `2px dashed ${color.dark}` };
+  }
+  return { backgroundColor: color.light, color: '#1f2937', border: '2px solid transparent' };
+}
+
+function AnnotateTool({ uploadedFiles }) {
+  const [selectedFileIds, setSelectedFileIds] = useState([]);
+>>>>>>> Stashed changes
   const [sourceText, setSourceText] = useState('');
   const [query, setQuery] = useState('');
   const [isRegex, setIsRegex] = useState(false);
@@ -391,9 +944,13 @@ function DataVisualizationTool({ uploadedFiles }) {
     }
 
     if (chartType === 'wordcloud') {
+<<<<<<< Updated upstream
       const wordData = generateWordFrequency(sourceText);
       
       // Add the search query to the word cloud if it exists
+=======
+      let wordData = generateWordFrequency(sourceText);
+>>>>>>> Stashed changes
       if (query && query.trim()) {
         const searchTermLower = query.toLowerCase();
         const existingIndex = wordData.findIndex(w => w.text === searchTermLower);
@@ -402,8 +959,12 @@ function DataVisualizationTool({ uploadedFiles }) {
           const [searchTerm] = wordData.splice(existingIndex, 1);
           wordData.unshift(searchTerm);
         } else {
+<<<<<<< Updated upstream
           // Add search term if it doesn't exist
           wordData.unshift({ text: searchTermLower, value: Math.max(...wordData.map(w => w.value)) });
+=======
+          wordData.unshift({ text: searchTermLower, value: Math.max(...wordData.map(w => w.value), 1) });
+>>>>>>> Stashed changes
         }
       }
 
@@ -414,6 +975,7 @@ function DataVisualizationTool({ uploadedFiles }) {
           </div>
         );
       }
+<<<<<<< Updated upstream
 
       const maxFreq = Math.max(...wordData.map(w => w.value));
       const colors = ['#0f66d0', '#e14f56', '#406b99', '#5d92dd', '#0a4ca3', '#c75a5a', '#2a5fb8', '#d44949', '#8b9fc9', '#6b8cc9'];
@@ -448,6 +1010,9 @@ function DataVisualizationTool({ uploadedFiles }) {
           })}
         </div>
       );
+=======
+      return <WordCloud words={wordData.slice(0, 100)} />;
+>>>>>>> Stashed changes
     }
 
     if (chartType === 'table') {
