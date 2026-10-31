@@ -150,6 +150,38 @@
   cursor: pointer;
 }
 
+.query-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.query-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #c5d5f0;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #233d63;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.query-chip:hover {
+  border-color: #a61b10;
+  background: #fff3f1;
+}
+
+.query-chip-remove-icon {
+  color: #a61b10;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .search-results {
   border-top: 1px solid #e2e8f2;
   padding-top: 0.8rem;

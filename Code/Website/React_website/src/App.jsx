@@ -1146,9 +1146,10 @@ function AnnotateTool({ uploadedFiles }) {
 }
 
 // SearchTool — base component used by DataVisualizationTool via extraRender
-function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
+function SearchTool({ title, subtitle, extraRender, uploadedFiles, multipleQueries = false }) {
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [query, setQuery] = useState('');
+  const [queries, setQueries] = useState([]);
   const [isRegex, setIsRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [results, setResults] = useState([]);
@@ -1174,31 +1175,72 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
     if (hasSearched) runSearch(next);
   };
 
-  const runSearch = (fileIds = selectedFileIds) => {
+  const runSearch = (fileIds = selectedFileIds, searchQueries = multipleQueries ? queries : [query]) => {
     setError('');
-    if (!query.trim()) { setResults([]); return; }
+    const activeQueries = searchQueries.map(item => item.trim()).filter(Boolean);
+    if (activeQueries.length === 0) { setResults([]); return; }
     setHasSearched(true);
     const sourceText = combineSelectedFiles(uploadedFiles, fileIds);
     try {
       const flags = caseSensitive ? 'g' : 'gi';
-      const pattern = isRegex ? query : escapeRegExp(query);
-      const regexp = new RegExp(pattern, flags);
-      const found = [];
-      let match;
-      while ((match = regexp.exec(sourceText)) !== null) {
-        const start = match.index;
-        const end = start + match[0].length;
-        const contextStart = Math.max(0, start - 40);
-        const contextEnd = Math.min(sourceText.length, end + 40);
-        const context = sourceText.slice(contextStart, contextEnd);
-        found.push({ start, end, matchText: match[0], context, contextStart, contextEnd });
-        if (match[0].length === 0) regexp.lastIndex += 1;
-      }
+      const found = activeQueries.flatMap(searchQuery => {
+        const pattern = isRegex ? searchQuery : escapeRegExp(searchQuery);
+        const regexp = new RegExp(pattern, flags);
+        const matches = [];
+        let match;
+        while ((match = regexp.exec(sourceText)) !== null) {
+          const start = match.index;
+          const end = start + match[0].length;
+          const contextStart = Math.max(0, start - 40);
+          const contextEnd = Math.min(sourceText.length, end + 40);
+          const context = sourceText.slice(contextStart, contextEnd);
+          matches.push({ query: searchQuery, start, end, matchText: match[0], context, contextStart, contextEnd });
+          if (match[0].length === 0) regexp.lastIndex += 1;
+        }
+        return matches;
+      }).sort((a, b) => a.start - b.start);
       setResults(found);
       if (found.length === 0) setError('No matches found.');
     } catch (e) {
       setResults([]);
       setError('Invalid regex: ' + e.message);
+    }
+  };
+
+  const addQuery = () => {
+    const searchQuery = query.trim();
+    if (!searchQuery) return;
+
+    try {
+      new RegExp(isRegex ? searchQuery : escapeRegExp(searchQuery));
+    } catch (e) {
+      setError('Invalid regex: ' + e.message);
+      return;
+    }
+
+    const duplicate = queries.some(item => (
+      caseSensitive ? item === searchQuery : item.toLowerCase() === searchQuery.toLowerCase()
+    ));
+    if (duplicate) {
+      setError('This search query has already been added.');
+      return;
+    }
+
+    const nextQueries = [...queries, searchQuery];
+    setQueries(nextQueries);
+    setQuery('');
+    runSearch(selectedFileIds, nextQueries);
+  };
+
+  const removeQuery = (searchQuery) => {
+    const nextQueries = queries.filter(item => item !== searchQuery);
+    setQueries(nextQueries);
+    if (nextQueries.length > 0) {
+      runSearch(selectedFileIds, nextQueries);
+    } else {
+      setResults([]);
+      setError('');
+      setHasSearched(false);
     }
   };
 
@@ -1210,7 +1252,12 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
           <div className="search-controls">
             <label>
               Search query
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="word or regex" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => multipleQueries && e.key === 'Enter' && addQuery()}
+                placeholder="word or regex"
+              />
             </label>
             <label>
               <input type="checkbox" checked={isRegex} onChange={(e) => setIsRegex(e.target.checked)} />
@@ -1220,8 +1267,31 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
               <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
               Case sensitive
             </label>
-            <button className="run-search" onClick={() => runSearch()} type="button">Search</button>
+            <button
+              className="run-search"
+              onClick={() => multipleQueries ? addQuery() : runSearch()}
+              type="button"
+            >
+              {multipleQueries ? 'Add query' : 'Search'}
+            </button>
           </div>
+
+          {multipleQueries && queries.length > 0 && (
+            <div className="query-chip-list" aria-label="Search queries">
+              {queries.map(searchQuery => (
+                <button
+                  key={searchQuery}
+                  type="button"
+                  className="query-chip"
+                  aria-label={`Remove search query ${searchQuery}`}
+                  onClick={() => removeQuery(searchQuery)}
+                >
+                  <span className="query-chip-remove-icon" aria-hidden="true">×</span>
+                  {searchQuery}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="search-results">
             <h3>Results ({results.length})</h3>
@@ -1234,7 +1304,10 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
                 const matches = item.context.match(re) || [];
                 return (
                   <li key={`${item.start}-${idx}`}>
-                    <span className="result-meta">pos {item.start}-{item.end}: "{item.matchText}"</span>
+                    <span className="result-meta">
+                      {multipleQueries && <>query "{item.query}" — </>}
+                      pos {item.start}-{item.end}: "{item.matchText}"
+                    </span>
                     <p>
                       {parts.flatMap((part, partIndex) => (
                         partIndex < matches.length
@@ -1248,7 +1321,16 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
             </ul>
           </div>
 
-          {extraRender && extraRender({ sourceText, query, isRegex, caseSensitive, results, setResults, setError })}
+          {extraRender && extraRender({
+            sourceText,
+            query: multipleQueries ? queries.join(', ') : query,
+            queries: multipleQueries ? queries : [query],
+            isRegex,
+            caseSensitive,
+            results,
+            setResults,
+            setError
+          })}
         </div>
       </div>
     </ToolPage>
@@ -1258,7 +1340,7 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
 function DataVisualizationTool({ uploadedFiles }) {
   const [chartType, setChartType] = useState('bar');
 
-  const renderVisualization = (chartType, results, query, sourceText) => {
+  const renderVisualization = (chartType, results, queries, sourceText) => {
     if (!results || results.length === 0) {
       return (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#666' }}>
@@ -1268,10 +1350,16 @@ function DataVisualizationTool({ uploadedFiles }) {
     }
 
     if (chartType === 'bar') {
+      const barData = queries.length > 1
+        ? queries.map(searchQuery => ({
+          name: searchQuery,
+          count: results.filter(result => result.query === searchQuery).length
+        }))
+        : [{ name: queries[0] || 'Search Term', count: results.length }];
       return (
         <div style={{ width: '100%', height: 300 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={[{ name: query || 'Search Term', count: results.length }]}>
+            <BarChart data={barData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" />
               <YAxis />
@@ -1305,8 +1393,8 @@ function DataVisualizationTool({ uploadedFiles }) {
 
     if (chartType === 'wordcloud') {
       const wordData = generateWordFrequency(sourceText);
-      if (query && query.trim()) {
-        const searchTermLower = query.toLowerCase();
+      queries.filter(searchQuery => searchQuery.trim()).forEach(searchQuery => {
+        const searchTermLower = searchQuery.toLowerCase();
         const existingIndex = wordData.findIndex(w => w.text === searchTermLower);
         if (existingIndex >= 0) {
           const [searchTerm] = wordData.splice(existingIndex, 1);
@@ -1314,7 +1402,7 @@ function DataVisualizationTool({ uploadedFiles }) {
         } else {
           wordData.unshift({ text: searchTermLower, value: Math.max(...wordData.map(w => w.value)) });
         }
-      }
+      });
       if (wordData.length === 0) {
         return (
           <div style={{ padding: '1.5rem', textAlign: 'center', color: '#666' }}>
@@ -1378,7 +1466,8 @@ function DataVisualizationTool({ uploadedFiles }) {
       title="Data Visualization"
       subtitle="Search text and render a chart or table based on your results."
       uploadedFiles={uploadedFiles}
-      extraRender={({ results, query, sourceText }) => (
+      multipleQueries
+      extraRender={({ results, queries, sourceText }) => (
         <div>
           <h3>Visualization Options</h3>
           <label>
@@ -1392,7 +1481,7 @@ function DataVisualizationTool({ uploadedFiles }) {
           </label>
           <p style={{ marginTop: '0.6rem' }}>Total matches: <strong>{results.length}</strong></p>
           <div style={{ marginTop: '1.2rem', padding: '1rem', border: '1px solid #dbe3f8', borderRadius: '8px', background: '#f5f8ff' }}>
-            {renderVisualization(chartType, results, query, sourceText)}
+            {renderVisualization(chartType, results, queries, sourceText)}
           </div>
         </div>
       )}
