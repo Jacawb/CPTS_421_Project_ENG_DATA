@@ -201,6 +201,7 @@ function KeywordContextTool({ uploadedFiles }) {
   const [message, setMessage] = usePersistentState('message', null); // { kind: 'error' | 'info', text }
   const [sortBy, setSortBy] = usePersistentState('sortBy', 'position');
   const [sortDir, setSortDir] = usePersistentState('sortDir', 'asc');
+  const [hasSearched, setHasSearched] = usePersistentState('hasSearched', false);
   const [visibleCount, setVisibleCount] = useState(KWIC_PAGE_SIZE);
   const [expandedId, setExpandedId] = useState(null);
 
@@ -211,6 +212,7 @@ function KeywordContextTool({ uploadedFiles }) {
     setSelectedFileIds((uploadedFiles || []).map(f => f.id));
     setResults([]);
     setMessage(null);
+    setHasSearched(false);
   }, [uploadedFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const contextWords = Math.max(1, Math.min(KWIC_MAX_CONTEXT, Number(contextInput) || 1));
@@ -222,18 +224,22 @@ function KeywordContextTool({ uploadedFiles }) {
     setExpandedId(null);
   };
 
+  // After a search has been run, changing the file selection re-runs it.
   const toggleFileSelection = (fileId) => {
-    setSelectedFileIds(prev =>
-      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
-    );
-    clearResults();
+    const next = selectedFileIds.includes(fileId)
+      ? selectedFileIds.filter(id => id !== fileId)
+      : [...selectedFileIds, fileId];
+    setSelectedFileIds(next);
+    if (hasSearched) runSearch(next);
+    else clearResults();
   };
 
-  const runSearch = () => {
+  const runSearch = (fileIds = selectedFileIds) => {
     clearResults();
     setVisibleCount(KWIC_PAGE_SIZE);
     if (!query.trim()) return;
-    const files = (uploadedFiles || []).filter(f => selectedFileIds.includes(f.id));
+    setHasSearched(true);
+    const files = (uploadedFiles || []).filter(f => fileIds.includes(f.id));
     if (files.length === 0) { setMessage({ kind: 'error', text: 'No files selected.' }); return; }
     let regexp;
     try {
@@ -368,7 +374,7 @@ function KeywordContextTool({ uploadedFiles }) {
               <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} />
               Whole word
             </label>
-            <button className="run-search" onClick={runSearch} type="button">Search</button>
+            <button className="run-search" onClick={() => runSearch()} type="button">Search</button>
           </div>
 
           <div className="kwic-results">
@@ -1102,6 +1108,7 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [results, setResults] = useState([]);
   const [error, setError] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
 
   useEffect(() => {
     if (uploadedFiles && uploadedFiles.length > 0) {
@@ -1109,19 +1116,27 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
     } else {
       setSelectedFileIds([]);
     }
+    setResults([]);
+    setError('');
+    setHasSearched(false);
   }, [uploadedFiles]);
 
   const sourceText = combineSelectedFiles(uploadedFiles, selectedFileIds);
 
+  // After a search has been run, changing the file selection re-runs it.
   const toggleFileSelection = (fileId) => {
-    setSelectedFileIds(prev =>
-      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
-    );
+    const next = selectedFileIds.includes(fileId)
+      ? selectedFileIds.filter(id => id !== fileId)
+      : [...selectedFileIds, fileId];
+    setSelectedFileIds(next);
+    if (hasSearched) runSearch(next);
   };
 
-  const runSearch = () => {
+  const runSearch = (fileIds = selectedFileIds) => {
     setError('');
     if (!query.trim()) { setResults([]); return; }
+    setHasSearched(true);
+    const sourceText = combineSelectedFiles(uploadedFiles, fileIds);
     try {
       const flags = caseSensitive ? 'g' : 'gi';
       const pattern = isRegex ? query : escapeRegExp(query);
@@ -1163,7 +1178,7 @@ function SearchTool({ title, subtitle, extraRender, uploadedFiles }) {
               <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
               Case sensitive
             </label>
-            <button className="run-search" onClick={runSearch} type="button">Search</button>
+            <button className="run-search" onClick={() => runSearch()} type="button">Search</button>
           </div>
 
           <div className="search-results">
