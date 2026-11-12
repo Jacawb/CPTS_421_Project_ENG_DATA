@@ -23,7 +23,7 @@ CREATE TABLE annotation_groups (
 CREATE TABLE annotations (
     id            INTEGER PRIMARY KEY,
     file_id       INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-    group_id      INTEGER NOT NULL REFERENCES annotation_groups(id),
+    group_id      INTEGER NOT NULL REFERENCES annotation_groups(id) ON DELETE CASCADE,
     start_offset  INTEGER,
     end_offset    INTEGER,            -- exclusive, UTF-16 code units (matches JS slice)
     selected_text TEXT NOT NULL,      -- copy of the text, to detect drift ('' for whole-document)

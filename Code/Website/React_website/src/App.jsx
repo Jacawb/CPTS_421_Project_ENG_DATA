@@ -553,9 +553,9 @@ const PENDING_STYLE = {
 };
 
 // Three states: unselected (light, no border), tagActive (medium + dashed
-// border — this highlight belongs to the selected tag, but isn't the
+// border - this highlight belongs to the selected tag, but isn't the
 // specific location currently focused), locationActive (dark + dashed
-// border — this exact highlight is the one currently selected).
+// border  this exact highlight is the one currently selected).
 function getMarkStyle(color, state) {
   if (state === 'locationActive') {
     return { backgroundColor: color.dark, color: color.darkText, border: `2px dashed ${color.light}` };
@@ -629,14 +629,38 @@ function AnnotateTool({ uploadedFiles }) {
   }, [uploadedFiles]);
 
   // Load the saved annotations for whichever files are selected.
+  // useEffect(() => {
+  //   setTags([]);
+  //   setAnnotateError('');
+  //   if (selectedFileIds.length === 0) return;
+  //   let cancelled = false;
+  //   api.listAnnotations(selectedFileIds)
+  //     .then(annotations => {
+  //       if (!cancelled) setTags(buildTags(annotations, getFileSpans(uploadedFiles, selectedFileIds)));
+  //     })
+  //     .catch(err => {
+  //       if (!cancelled) setAnnotateError(`Could not load annotations: ${err.message}`);
+  //     });
+  //   return () => { cancelled = true; };
+  // }, [uploadedFiles, selectedFileIds]);
   useEffect(() => {
     setTags([]);
     setAnnotateError('');
-    if (selectedFileIds.length === 0) return;
     let cancelled = false;
-    api.listAnnotations(selectedFileIds)
-      .then(annotations => {
-        if (!cancelled) setTags(buildTags(annotations, getFileSpans(uploadedFiles, selectedFileIds)));
+    Promise.all([
+      api.listGroups(),
+      selectedFileIds.length ? api.listAnnotations(selectedFileIds) : Promise.resolve([]),
+    ])
+      .then(([groups, annotations]) => {
+        if (cancelled) return;
+        const built = buildTags(annotations, getFileSpans(uploadedFiles, selectedFileIds));
+        setTags(groups.map(g => ({
+          id: g.id,
+          note: g.name,
+          color: paletteColor(g.color),
+          total: g.tag_count,
+          ranges: built.find(t => t.id === g.id)?.ranges ?? [],
+        })));
       })
       .catch(err => {
         if (!cancelled) setAnnotateError(`Could not load annotations: ${err.message}`);
@@ -730,9 +754,13 @@ function AnnotateTool({ uploadedFiles }) {
             id: result.id, file_id: span.fileId, start: annotation.start, end: annotation.end,
             selected_text: annotation.selectedText,
           }, span);
+          // next = next.some(t => t.id === result.group_id)
+          //   ? next.map(t => t.id === result.group_id ? { ...t, ranges: [...t.ranges, range] } : t)
+          //   : [...next, { id: result.group_id, note: result.name, color: paletteColor(result.color), ranges: [range] }];
           next = next.some(t => t.id === result.group_id)
-            ? next.map(t => t.id === result.group_id ? { ...t, ranges: [...t.ranges, range] } : t)
-            : [...next, { id: result.group_id, note: result.name, color: paletteColor(result.color), ranges: [range] }];
+            ? next.map(t => t.id === result.group_id
+              ? { ...t, total: t.total + 1, ranges: [...t.ranges, range] } : t)
+            : [...next, { id: result.group_id, note: result.name, color: paletteColor(result.color), total: 1, ranges: [range] }];
         });
         return next;
       });
@@ -777,29 +805,44 @@ function AnnotateTool({ uploadedFiles }) {
       setAnnotateError(`Could not remove annotation: ${err.message}`);
       return;
     }
-    setTags(prev => prev
-      .map(t => t.id === tagId ? { ...t, ranges: t.ranges.filter(r => r.id !== rangeId) } : t)
-      .filter(t => t.ranges.length > 0)
-    );
+    // setTags(prev => prev
+    //   .map(t => t.id === tagId ? { ...t, ranges: t.ranges.filter(r => r.id !== rangeId) } : t)
+    //   .filter(t => t.ranges.length > 0)
+    // );
+    setTags(prev => prev.map(t => t.id === tagId
+      ? { ...t, total: t.total - 1, ranges: t.ranges.filter(r => r.id !== rangeId) }
+      : t));
     if (activeLocationId === rangeId) setActiveLocationId(null);
   };
 
   // Removes this tag's annotations from the selected files.
+  // const deleteTag = async (tag) => {
+  //   const count = tag.ranges.length;
+  //   if (!window.confirm(`Delete the tag "${tag.note}" and its ${count} annotation${count !== 1 ? 's' : ''}?`)) return;
+  //   setAnnotateError('');
+  //   const results = await Promise.allSettled(tag.ranges.map(r => api.deleteAnnotation(r.id)));
+  //   const failedIds = new Set(tag.ranges.filter((r, i) => results[i].status === 'rejected').map(r => r.id));
+  //   setTags(prev => prev
+  //     .map(t => t.id === tag.id ? { ...t, ranges: t.ranges.filter(r => failedIds.has(r.id)) } : t)
+  //     .filter(t => t.ranges.length > 0)
+  //   );
+  //   if (failedIds.size > 0) {
+  //     setAnnotateError(`Could not delete ${failedIds.size} annotation(s) from "${tag.note}".`);
+  //   } else if (activeTagId === tag.id) {
+  //     clearActiveSelection();
+  //   }
+  // };
   const deleteTag = async (tag) => {
-    const count = tag.ranges.length;
-    if (!window.confirm(`Delete the tag "${tag.note}" and its ${count} annotation${count !== 1 ? 's' : ''}?`)) return;
+    if (!window.confirm(`Delete the tag "${tag.note}" everywhere? This removes all ${tag.total} of its annotations across every file.`)) return;
     setAnnotateError('');
-    const results = await Promise.allSettled(tag.ranges.map(r => api.deleteAnnotation(r.id)));
-    const failedIds = new Set(tag.ranges.filter((r, i) => results[i].status === 'rejected').map(r => r.id));
-    setTags(prev => prev
-      .map(t => t.id === tag.id ? { ...t, ranges: t.ranges.filter(r => failedIds.has(r.id)) } : t)
-      .filter(t => t.ranges.length > 0)
-    );
-    if (failedIds.size > 0) {
-      setAnnotateError(`Could not delete ${failedIds.size} annotation(s) from "${tag.note}".`);
-    } else if (activeTagId === tag.id) {
-      clearActiveSelection();
+    try {
+      await api.deleteGroup(tag.id);
+    } catch (err) {
+      setAnnotateError(`Could not delete tag: ${err.message}`);
+      return;
     }
+    setTags(prev => prev.filter(t => t.id !== tag.id));
+    if (activeTagId === tag.id) clearActiveSelection();
   };
 
   const jumpToLocation = (tagId, rangeId) => {
@@ -1064,7 +1107,8 @@ function AnnotateTool({ uploadedFiles }) {
                           }}
                         />
                         {tag.note}
-                        <span className="annotate-tag-count"> — {tag.ranges.length} location{tag.ranges.length !== 1 ? 's' : ''}</span>
+                        <span className="annotate-tag-count"> — {tag.ranges.length} here · {tag.total} total</span>
+                        {/* <span className="annotate-tag-count"> — {tag.ranges.length} location{tag.ranges.length !== 1 ? 's' : ''}</span> */}
                       </div>
                       <button
                         className="annotate-item-delete"

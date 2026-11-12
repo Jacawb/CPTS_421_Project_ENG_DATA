@@ -25,4 +25,8 @@ export const api = {
     request(`/files/${fileId}/annotations`, { method: 'POST', body: annotation }),
   deleteAnnotation: (id) => request(`/annotations/${id}`, { method: 'DELETE' }),
   setGroupColor: (groupId, color) => request(`/groups/${groupId}`, { method: 'PATCH', body: { color } }),
+  // every group with tag_count (annotations across all files), whether or not the open file uses it
+  listGroups: () => request('/groups'),
+  // removes the group and every annotation in it, across all files
+  deleteGroup: (id) => request(`/groups/${id}`, { method: 'DELETE' }),
 };

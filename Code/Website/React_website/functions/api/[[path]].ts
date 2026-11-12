@@ -79,6 +79,7 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
         if (del.results.length === 0) return err("Not found", 404);
         return json({ deleted: true });
       }
+      
 
       // POST /api/files/:id/annotations
       // body: { name, color, start, end, selectedText }
@@ -135,7 +136,16 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
         await env.DB.prepare("UPDATE annotation_groups SET color = ? WHERE id = ?").bind(color, groupId).run();
         return json({ id: groupId, color });
       }
+
+      if (parts.length === 2 && method === "DELETE" && Number.isInteger(groupId)) {
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM annotations WHERE group_id = ?").bind(groupId),
+          env.DB.prepare("DELETE FROM annotation_groups WHERE id = ?").bind(groupId),
+        ]);
+        return json({ deleted: true });
+      }
     }
+    
 
     // ---------- ANNOTATIONS ----------
     // GET /api/annotations?files=1,2,3  -> every annotation in those files, with its group
@@ -159,12 +169,13 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
     if (parts[0] === "annotations" && parts.length === 2 && method === "DELETE") {
       const id = Number(parts[1]);
       if (!Number.isInteger(id)) return err("Bad id");
-      await env.DB.batch([
-        env.DB.prepare("DELETE FROM annotations WHERE id = ?").bind(id),
-        env.DB.prepare(
-          "DELETE FROM annotation_groups WHERE id NOT IN (SELECT DISTINCT group_id FROM annotations)"
-        ),
-      ]);
+      // await env.DB.batch([
+      //   env.DB.prepare("DELETE FROM annotations WHERE id = ?").bind(id),
+      //   env.DB.prepare(
+      //     "DELETE FROM annotation_groups WHERE id NOT IN (SELECT DISTINCT group_id FROM annotations)"
+      //   ),
+      // ]);
+      await env.DB.prepare("DELETE FROM annotations WHERE id = ?").bind(id).run(); //NEW
       return json({ deleted: true });
     }
 
