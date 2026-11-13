@@ -23,8 +23,8 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
       // GET /api/files?content=1    -> metadata + text (used to load the workspace in one request)
       if (parts.length === 1 && method === "GET") {
         const columns = url.searchParams.get("content") === "1"
-          ? "id, name, content, size_bytes, created_at"
-          : "id, name, size_bytes, created_at";
+          ? "id, name, content, size_bytes, corpus_id, created_at"
+          : "id, name, size_bytes, corpus_id, created_at";
         const { results } = await env.DB.prepare(
           `SELECT ${columns} FROM files ORDER BY created_at DESC, id DESC`
         ).all();
@@ -33,18 +33,19 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
 
       // POST /api/files   body: { name, content }   (JSON, so file names stay out of URLs/logs)
       if (parts.length === 1 && method === "POST") {
-        const b = (await request.json()) as { name?: string; content?: string };
+        const b = (await request.json()) as { name?: string; content?: string ; corpusId?: number | null };
         const name = (b.name ?? "").trim() || "untitled.txt";
         const content = b.content ?? "";
         const sizeBytes = new TextEncoder().encode(content).byteLength;
+        const corpusId = Number.isInteger(b.corpusId) ? (b.corpusId as number) : null;
         if (sizeBytes === 0) return err("Empty file");
         if (sizeBytes > MAX_FILE_BYTES) return err("File too large (max 1 MB of text)", 413);
 
         const row = await env.DB
-          .prepare("INSERT INTO files (name, content, size_bytes) VALUES (?, ?, ?) RETURNING id, created_at")
-          .bind(name, content, sizeBytes)
+          .prepare("INSERT INTO files (name, content, size_bytes, corpus_id) VALUES (?, ?, ?, ?) RETURNING id, created_at")
+          .bind(name, content, sizeBytes, corpusId)
           .first<{ id: number; created_at: string }>();
-        return json({ id: row!.id, name, size_bytes: sizeBytes, created_at: row!.created_at }, 201);
+        return json({ id: row!.id, name, size_bytes: sizeBytes, corpus_id: corpusId, created_at: row!.created_at }, 201);
       }
 
       const fileId = Number(parts[1]);
@@ -78,6 +79,17 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
         ]);
         if (del.results.length === 0) return err("Not found", 404);
         return json({ deleted: true });
+      }
+
+      // PATCH /api/files/:id   body: { corpusId }  (null = unassigned)
+      if (parts.length === 2 && method === "PATCH") {
+        const { corpusId } = (await request.json()) as { corpusId?: number | null };
+        const value = corpusId == null ? null : Number(corpusId);
+        if (value !== null && !Number.isInteger(value)) return err("Bad corpus id");
+        const row = await env.DB.prepare("UPDATE files SET corpus_id = ? WHERE id = ? RETURNING id")
+          .bind(value, fileId).first();
+        if (!row) return err("Not found", 404);
+        return json({ id: fileId, corpus_id: value });
       }
       
 
@@ -146,6 +158,38 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
       }
     }
     
+    // ---------- CORPORA ----------
+    if (parts[0] === "corpora") {
+      if (parts.length === 1 && method === "GET") {
+        const { results } = await env.DB.prepare("SELECT id, name FROM corpora ORDER BY name").all();
+        return json(results);
+      }
+      if (parts.length === 1 && method === "POST") {
+        const { name } = (await request.json()) as { name?: string };
+        const n = (name ?? "").trim();
+        if (!n) return err("Name required");
+        const row = await env.DB
+          .prepare("INSERT INTO corpora (name) VALUES (?) ON CONFLICT(name) DO NOTHING RETURNING id, name")
+          .bind(n).first();
+        if (!row) return err("A corpus with that name already exists", 409);
+        return json(row, 201);
+      }
+      const corpusId = Number(parts[1]);
+      if (!Number.isInteger(corpusId)) return err("Bad corpus id");
+      if (parts.length === 2 && method === "PATCH") {
+        const { name } = (await request.json()) as { name?: string };
+        const n = (name ?? "").trim();
+        if (!n) return err("Name required");
+        const row = await env.DB.prepare("UPDATE corpora SET name = ? WHERE id = ? RETURNING id, name")
+          .bind(n, corpusId).first();
+        if (!row) return err("Not found", 404);
+        return json(row);
+      }
+      if (parts.length === 2 && method === "DELETE") {
+        await env.DB.prepare("DELETE FROM corpora WHERE id = ?").bind(corpusId).run(); // files become unassigned
+        return json({ deleted: true });
+      }
+    }
 
     // ---------- ANNOTATIONS ----------
     // GET /api/annotations?files=1,2,3  -> every annotation in those files, with its group

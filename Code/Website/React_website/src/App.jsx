@@ -1576,10 +1576,161 @@ function formatSavedDate(createdAt) {
   return new Date(`${createdAt.replace(' ', 'T')}Z`).toLocaleDateString();
 }
 
-function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
+// function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
+//   const [status, setStatus] = useState('');
+//   const [error, setError] = useState('');
+//   const [loading, setLoading] = useState(false);
+//
+//   const loadFiles = async (selectedFiles) => {
+//     if (!selectedFiles || selectedFiles.length === 0) return;
+//     const validFiles = Array.from(selectedFiles).filter(file =>
+//       file.type.includes('text') || file.name.endsWith('.txt')
+//     );
+//     if (validFiles.length === 0) {
+//       setError('Please select only plain text (.txt) files.');
+//       return;
+//     }
+//     setLoading(true);
+//     setStatus(`Saving ${validFiles.length} file(s)...`);
+//     const failures = [];
+//     for (const file of validFiles) {
+//       try {
+//         await saveFile(file.name, await readFileAsText(file));
+//       } catch (err) {
+//         failures.push(`${file.name} (${err.message})`);
+//       }
+//     }
+//     const savedCount = validFiles.length - failures.length;
+//     setStatus(savedCount > 0 ? `Saved ${savedCount} file(s)` : '');
+//     setError(failures.length > 0 ? `Could not save: ${failures.join('; ')}` : '');
+//     setLoading(false);
+//   };
+
+//   const deleteFile = async (file) => {
+//     if (!window.confirm(`Delete "${file.name}" and all of its annotations? This cannot be undone.`)) return;
+//     setError(''); setStatus('');
+//     try {
+//       await removeFile(file.id);
+//       setStatus(`Deleted ${file.name}`);
+//     } catch (err) {
+//       setError(`Could not delete ${file.name}: ${err.message}`);
+//     }
+//   };
+
+//   const loadFromUrl = async (url, name) => {
+//     setLoading(true);
+//     setError('');
+//     setStatus('Loading document from OneDrive...');
+//     try {
+//       const response = await fetch(url);
+//       if (!response.ok) throw new Error(`Fetch failed with ${response.status}`);
+//       const text = await response.text();
+//       await saveFile(name, text);
+//       setStatus(`Saved OneDrive file: ${name}`);
+//     } catch (err) {
+//       setError(`Unable to load file from OneDrive: ${err.message}`);
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   const onSelectFile = (event) => {
+//     setError(''); setStatus('');
+//     loadFiles(event.target.files);
+//   };
+
+//   const onDrop = (event) => {
+//     event.preventDefault();
+//     setError(''); setStatus('');
+//     loadFiles(event.dataTransfer.files);
+//   };
+
+//   const openOneDrivePicker = () => {
+//     setError('');
+//     const initPicker = () => {
+//       if (!window.OneDrive?.open) { setError('OneDrive picker is not available.'); return; }
+//       window.OneDrive.open({
+//         clientId: '<YOUR_ONEDRIVE_APP_CLIENT_ID>',
+//         action: 'download',
+//         multiSelect: false,
+//         advanced: { filter: '.txt', redirectUri: window.location.origin },
+//         success: (files) => {
+//           const selected = Array.isArray(files) ? files : files?.value || [];
+//           if (!selected.length) { setError('No file selected from OneDrive.'); return; }
+//           const file = selected[0];
+//           const downloadUrl = file['@microsoft.graph.downloadUrl'] || file.downloadUrl || file.url || file.webUrl;
+//           if (!downloadUrl) { setError('Unable to get a download URL for the selected file.'); return; }
+//           loadFromUrl(downloadUrl, file.name || 'OneDrive document');
+//         },
+//         cancel: () => setStatus('OneDrive picker closed.'),
+//         error: (err) => setError(`OneDrive picker error: ${err?.message || JSON.stringify(err)}`),
+//       });
+//     };
+//     if (window.OneDrive) { initPicker(); return; }
+//     const script = document.createElement('script');
+//     script.src = 'https://js.live.net/v7.2/OneDrive.js';
+//     script.onload = initPicker;
+//     script.onerror = () => setError('Failed to load the OneDrive picker script.');
+//     document.body.appendChild(script);
+//   };
+
+//   return (
+//     <ToolPage title="Document Manager" subtitle="Upload documents to save them for the keyword and annotation tools. Saved documents stay after a refresh.">
+//       <div className="doc-manager-grid">
+//         <div className="doc-manager-card" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+//           <h3>Local files</h3>
+//           <p>Upload one or more plain text documents from your computer.</p>
+//           <input type="file" accept=".txt,text/plain" onChange={onSelectFile} multiple disabled={loading} />
+//         </div>
+//         <div className="doc-manager-card">
+//           <h3>OneDrive</h3>
+//           <p>Choose a text file from OneDrive for searching and review.</p>
+//           <button type="button" className="run-search" onClick={openOneDrivePicker} disabled={loading}>
+//             {loading ? 'Loading...' : 'Select from OneDrive'}
+//           </button>
+//         </div>
+//       </div>
+//       <div className="doc-manager-status">
+//         {status && <div className="status-message">{status}</div>}
+//         {error && <div className="error">{error}</div>}
+//       </div>
+
+//       <div className="doc-manager-card doc-manager-saved">
+//         <h3>Saved documents ({files.length})</h3>
+//         {libraryStatus.loading && <p>Loading saved documents...</p>}
+//         {libraryStatus.error && <div className="error">{libraryStatus.error}</div>}
+//         {!libraryStatus.loading && !libraryStatus.error && files.length === 0 && <p>No documents saved yet.</p>}
+//         {files.length > 0 && (
+//           <ul className="saved-file-list">
+//             {files.map(file => (
+//               <li key={file.id}>
+//                 <span className="file-name">{file.name}</span>
+//                 <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
+//                 <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
+//               </li>
+//             ))}
+//           </ul>
+//         )}
+//       </div>
+//     </ToolPage>
+//   );
+// }
+
+function DocumentManager({
+  files, libraryStatus, saveFile, removeFile,
+  corpora, activeCorpusId, moveFile, createCorpus, renameCorpus, deleteCorpus,
+}) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [newCorpus, setNewCorpus] = useState('');
+
+  const activeName = corpora.find(c => c.id === activeCorpusId)?.name ?? 'Unassigned';
+
+  const run = async (fn) => {
+    setError('');
+    try { await fn(); } catch (err) { setError(err.message); }
+  };
 
   const loadFiles = async (selectedFiles) => {
     if (!selectedFiles || selectedFiles.length === 0) return;
@@ -1674,12 +1825,19 @@ function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
     document.body.appendChild(script);
   };
 
+  // Saved-file list is grouped: one section per corpus, then Unassigned.
+  const sections = [
+    ...corpora.map(c => ({ id: c.id, name: c.name })),
+    { id: null, name: 'Unassigned' },
+  ];
+
   return (
     <ToolPage title="Document Manager" subtitle="Upload documents to save them for the keyword and annotation tools. Saved documents stay after a refresh.">
       <div className="doc-manager-grid">
         <div className="doc-manager-card" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
           <h3>Local files</h3>
           <p>Upload one or more plain text documents from your computer.</p>
+          <p>Files will be added to: <strong>{activeName}</strong></p>
           <input type="file" accept=".txt,text/plain" onChange={onSelectFile} multiple disabled={loading} />
         </div>
         <div className="doc-manager-card">
@@ -1690,9 +1848,53 @@ function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
           </button>
         </div>
       </div>
+
       <div className="doc-manager-status">
         {status && <div className="status-message">{status}</div>}
         {error && <div className="error">{error}</div>}
+      </div>
+
+      <div className="doc-manager-card">
+        <h3>Corpora</h3>
+        <div className="annotate-input-row">
+          <input
+            value={newCorpus}
+            onChange={e => setNewCorpus(e.target.value)}
+            placeholder="New corpus name"
+          />
+          <button
+            className="run-search" type="button" disabled={!newCorpus.trim()}
+            onClick={() => run(async () => { await createCorpus(newCorpus.trim()); setNewCorpus(''); })}
+          >
+            Create
+          </button>
+        </div>
+        {corpora.length === 0 && <p>No corpora yet.</p>}
+        <ul className="saved-file-list">
+          {corpora.map(c => (
+            <li key={c.id}>
+              <span className="file-name">{c.name}</span>
+              <button
+                type="button" className="annotate-item-delete"
+                onClick={() => {
+                  const n = window.prompt('Rename corpus', c.name);
+                  if (n?.trim()) run(() => renameCorpus(c.id, n));
+                }}
+              >
+                Rename
+              </button>
+              <button
+                type="button" className="annotate-item-delete"
+                onClick={() =>
+                  window.confirm(`Delete corpus "${c.name}"? Its files will become unassigned, not deleted.`) &&
+                  run(() => deleteCorpus(c.id))
+                }
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
 
       <div className="doc-manager-card doc-manager-saved">
@@ -1700,17 +1902,31 @@ function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
         {libraryStatus.loading && <p>Loading saved documents...</p>}
         {libraryStatus.error && <div className="error">{libraryStatus.error}</div>}
         {!libraryStatus.loading && !libraryStatus.error && files.length === 0 && <p>No documents saved yet.</p>}
-        {files.length > 0 && (
-          <ul className="saved-file-list">
-            {files.map(file => (
-              <li key={file.id}>
-                <span className="file-name">{file.name}</span>
-                <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
-                <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
-              </li>
-            ))}
-          </ul>
-        )}
+        {sections.map(s => {
+          const inSection = files.filter(f => (f.corpus_id ?? null) === s.id);
+          if (inSection.length === 0) return null;
+          return (
+            <div key={s.id ?? 'none'}>
+              <h4>{s.name} ({inSection.length})</h4>
+              <ul className="saved-file-list">
+                {inSection.map(file => (
+                  <li key={file.id}>
+                    <span className="file-name">{file.name}</span>
+                    <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
+                    <select
+                      value={file.corpus_id ?? ''}
+                      onChange={e => run(() => moveFile(file.id, e.target.value ? Number(e.target.value) : null))}
+                    >
+                      <option value="">Unassigned</option>
+                      {corpora.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
       </div>
     </ToolPage>
   );
@@ -1719,6 +1935,11 @@ function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
 export default function App() {
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [libraryStatus, setLibraryStatus] = useState({ loading: true, error: '' });
+  const [corpora, setCorpora] = useState([]);
+  const [activeCorpusId, setActiveCorpusId] = useState(() => {
+    const v = localStorage.getItem('activeCorpusId');
+    return v ? Number(v) : null;   // null = Unassigned
+  });
 
   // Load every saved document (with its text) once, so all tools can use them.
   useEffect(() => {
@@ -1730,9 +1951,55 @@ export default function App() {
       .catch(err => setLibraryStatus({ loading: false, error: `Could not load saved documents: ${err.message}` }));
   }, []);
 
+  useEffect(() => {
+    api.listCorpora()
+      .then(list => {
+        setCorpora(list);
+        // forget a saved corpus that no longer exists
+        setActiveCorpusId(cur => (list.some(c => c.id === cur) ? cur : null));
+      })
+      .catch(err => setLibraryStatus(s => ({ ...s, error: `Could not load corpora: ${err.message}` })));
+  }, []);
+
+  const changeCorpus = (id) => {
+    setActiveCorpusId(id);
+    if (id === null) localStorage.removeItem('activeCorpusId');
+    else localStorage.setItem('activeCorpusId', String(id));
+    };
+
+  // Memoized: AnnotateTool resets its selection whenever this array's identity changes.
+  const scopedFiles = useMemo(
+    () => uploadedFiles.filter(f => (f.corpus_id ?? null) === activeCorpusId),
+    [uploadedFiles, activeCorpusId]
+  );
+
+  // New uploads go into whichever corpus is active
   const saveFile = async (name, content) => {
-    const saved = await api.uploadFile(name, content);
+    const saved = await api.uploadFile(name, content, activeCorpusId);
     setUploadedFiles(prev => [{ ...saved, content }, ...prev]);
+  };
+
+  const moveFile = async (fileId, corpusId) => {
+    await api.setFileCorpus(fileId, corpusId);
+    setUploadedFiles(prev => prev.map(f => f.id === fileId ? { ...f, corpus_id: corpusId } : f));
+  };
+
+  const createCorpus = async (name) => {
+    const c = await api.createCorpus(name);
+    setCorpora(prev => [...prev, c].sort((a, b) => a.name.localeCompare(b.name)));
+    changeCorpus(c.id);
+  };
+
+  const renameCorpus = async (id, name) => {
+    const c = await api.renameCorpus(id, name);
+    setCorpora(prev => prev.map(x => x.id === id ? c : x).sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
+  const deleteCorpus = async (id) => {
+    await api.deleteCorpus(id);
+    setCorpora(prev => prev.filter(c => c.id !== id));
+    setUploadedFiles(prev => prev.map(f => f.corpus_id === id ? { ...f, corpus_id: null } : f));
+    if (activeCorpusId === id) changeCorpus(null);
   };
 
   const removeFile = async (id) => {
@@ -1749,7 +2016,19 @@ export default function App() {
           <NavLink to="/document-manager" className={({ isActive }) => (isActive ? 'active' : '')}>Document Manager</NavLink>
           <NavLink to="/keyword-context" className={({ isActive }) => (isActive ? 'active' : '')}>Keyword in Context</NavLink>
           <NavLink to="/annotate" className={({ isActive }) => (isActive ? 'active' : '')}>Annotate</NavLink>
-          <NavLink to="/data-visualization" className={({ isActive }) => (isActive ? 'active' : '')}>Data Visualization</NavLink>        </nav>
+          <NavLink to="/data-visualization" className={({ isActive }) => (isActive ? 'active' : '')}>Data Visualization</NavLink>
+        </nav>
+        <div className="corpus-picker">
+          <label>Corpus</label>
+          <select value={activeCorpusId ?? ''} onChange={e => changeCorpus(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Unassigned ({uploadedFiles.filter(f => f.corpus_id == null).length})</option>
+            {corpora.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({uploadedFiles.filter(f => f.corpus_id === c.id).length})
+              </option>
+            ))}
+          </select>
+        </div>
       </aside>
       <main className="main-content">
         <header className="page-header">
@@ -1759,13 +2038,15 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route
-            path="/document-manager"
-            element={<DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile} removeFile={removeFile} />}
-          />
-          <Route path="/keyword-context" element={<KeywordContextTool uploadedFiles={uploadedFiles} />} />
-          <Route path="/annotate" element={<AnnotateTool uploadedFiles={uploadedFiles} />} />
-          <Route path="/data-visualization" element={<DataVisualizationTool uploadedFiles={uploadedFiles} />} />          <Route path="*" element={<h2>Page not found</h2>} />
+          <Route path="/document-manager" element={
+            <DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile} removeFile={removeFile}
+              corpora={corpora} activeCorpusId={activeCorpusId}
+              moveFile={moveFile} createCorpus={createCorpus} renameCorpus={renameCorpus} deleteCorpus={deleteCorpus} />
+          } />
+          <Route path="/keyword-context" element={<KeywordContextTool uploadedFiles={scopedFiles} />} />
+          <Route path="/annotate" element={<AnnotateTool uploadedFiles={scopedFiles} />} />
+          <Route path="/data-visualization" element={<DataVisualizationTool uploadedFiles={scopedFiles} />} />
+          <Route path="*" element={<h2>Page not found</h2>} />
         </Routes>
       </main>
     </div>

@@ -15,9 +15,14 @@ async function request(path, { method = 'GET', body } = {}) {
 
 export const api = {
   listFilesWithContent: () => request('/files?content=1'),
-  uploadFile: (name, content) => request('/files', { method: 'POST', body: { name, content } }),
+  uploadFile: (name, content, corpusId = null) => request('/files', { method: 'POST', body: { name, content, corpusId } }),
   deleteFile: (id) => request(`/files/${id}`, { method: 'DELETE' }),
 
+  setFileCorpus: (id, corpusId) => request(`/files/${id}`, { method: 'PATCH', body: { corpusId } }),
+  listCorpora: () => request('/corpora'),
+  createCorpus: (name) => request('/corpora', { method: 'POST', body: { name } }),
+  renameCorpus: (id, name) => request(`/corpora/${id}`, { method: 'PATCH', body: { name } }),
+  deleteCorpus: (id) => request(`/corpora/${id}`, { method: 'DELETE' }),
   // fileIds: array of file ids; returns annotations with file_id, group_id, start, end, name, color
   listAnnotations: (fileIds) => request(`/annotations?files=${fileIds.join(',')}`),
   // annotation: { name, color, start, end, selectedText } (start/end null = whole document)
