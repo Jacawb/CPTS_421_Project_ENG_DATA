@@ -4,9 +4,10 @@ import pandas as pd
 import unicodedata
 from pathlib import Path
 from rapidfuzz import fuzz
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
-                             QWidget, QTextEdit, QLineEdit, QFileDialog, QLabel, 
-                             QProgressBar, QMessageBox)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout,
+                             QHBoxLayout, QGridLayout, QWidget, QTextEdit,
+                             QLineEdit, QFileDialog, QLabel, QProgressBar,
+                             QMessageBox, QFrame, QListWidget, QTabWidget)
 from docx import Document
 import fitz  # PyMuPDF
 
@@ -28,7 +29,7 @@ class RedactorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FERPA Compliance Tool")
-        self.setMinimumSize(600, 750)
+        self.setMinimumSize(900, 650)
         self.initUI()
         self.blacklisted_terms = set()
         self.selected_files = []
@@ -38,82 +39,152 @@ class RedactorApp(QMainWindow):
     # Builds the user interface by creating buttons, text boxes, labels, and layouts.
     # Arranges everything in a vertical layout for the main window.
     def initUI(self):
-        layout = QVBoxLayout()
+        self.setStyleSheet("""
+            QMainWindow, QWidget#page { background: #f7f8fa; color: #172b4d; font-family: "Segoe UI"; font-size: 10pt; }
+            QFrame#panel { background: #ffffff; border: 1px solid #c8d0d9; border-radius: 5px; }
+            QLabel#pageTitle { color: #102a43; font-size: 17pt; font-weight: 700; }
+            QLabel#muted { color: #62748a; }
+            QLabel#sectionTitle { color: #173b63; font-size: 11pt; font-weight: 600; }
+            QLabel#fieldLabel { color: #344b63; font-weight: 600; }
+            QTextEdit, QLineEdit, QListWidget {
+                background: #ffffff; border: 1px solid #c8d0d9; border-radius: 4px;
+                padding: 7px; selection-background-color: #dceaf6;
+            }
+            QTextEdit:focus, QLineEdit:focus, QListWidget:focus { border: 1px solid #5181ad; }
+            QPushButton { background: #ffffff; color: #24415f; border: 1px solid #b9c5d1; border-radius: 4px; padding: 8px 12px; }
+            QPushButton:hover { background: #f0f6fc; border-color: #8ba9c6; }
+            QPushButton#primaryButton { background: #176b55; color: #ffffff; border: 1px solid #176b55; padding: 11px 30px; font-weight: 700; }
+            QPushButton#primaryButton:hover { background: #125743; }
+            QPushButton#quietButton { color: #596c80; background: transparent; border: none; }
+            QPushButton#quietButton:hover { color: #a33b3b; background: #fff5f5; }
+            QTabWidget::pane { border: 1px solid #c8d0d9; border-radius: 4px; background: #ffffff; }
+            QTabBar::tab { background: #edf1f5; color: #344b63; padding: 7px 13px; border: 1px solid #c8d0d9; }
+            QTabBar::tab:selected { background: #ffffff; color: #173b63; }
+            QProgressBar { background: #e8eef5; border: none; border-radius: 4px; height: 9px; text-align: center; }
+            QProgressBar::chunk { background: #2b8068; border-radius: 4px; }
+        """)
 
-        # Step 1: Input names and IDs
-        layout.addWidget(QLabel("<b>Step 1: Input Names and IDs to Remove</b>"))
-        
-        prof_layout = QVBoxLayout()
-        prof_layout.addWidget(QLabel("Professor Names:"))
-        self.prof_input = QTextEdit()
-        self.prof_input.setFixedHeight(80)
-        prof_layout.addWidget(self.prof_input)
-        layout.addLayout(prof_layout)
-        
-        name_layout = QVBoxLayout()
-        name_layout.addWidget(QLabel("Student Names:"))
-        self.name_input = QTextEdit()
-        name_layout.addWidget(self.name_input)
-        layout.addLayout(name_layout)
-        
-        id_layout = QVBoxLayout()
-        id_layout.addWidget(QLabel("Student IDs:"))
-        self.id_input = QTextEdit()
-        id_layout.addWidget(self.id_input)
-        layout.addLayout(id_layout)
-        
-        btn_excel = QPushButton("📁 Load from Excel")
-        btn_excel.clicked.connect(self.load_excel)
-        layout.addWidget(btn_excel)
+        page = QWidget()
+        page.setObjectName("page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
 
-        # Step 2: Custom file naming
-        layout.addWidget(QLabel("<br><b>Step 2: Custom File Naming (Optional)</b>"))
-        self.prefix_input = QLineEdit()
-        self.prefix_input.setPlaceholderText("Enter file prefix (e.g. Class_Semester)")
-        layout.addWidget(self.prefix_input)
+        title = QLabel("FERPA Compliance Tool")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
 
-        # Step 3: Select files
-        layout.addWidget(QLabel("<br><b>Step 3: Select Student Files</b>"))
-        file_btn_layout = QVBoxLayout()
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(14)
+        columns.setVerticalSpacing(8)
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+        columns.setRowStretch(1, 1)
 
-        btn_files = QPushButton("📄 Select Individual Files")
-        btn_files.clicked.connect(self.select_files)
-        file_btn_layout.addWidget(btn_files)
+        files_title = QLabel("Select file input")
+        files_title.setObjectName("sectionTitle")
+        columns.addWidget(files_title, 0, 0)
+        names_title = QLabel("Input names/ID to redact")
+        names_title.setObjectName("sectionTitle")
+        columns.addWidget(names_title, 0, 1)
 
-        btn_folder = QPushButton("📂 Select Folder (All .docx/.pdf)")
-        btn_folder.clicked.connect(self.select_folder)
-        file_btn_layout.addWidget(btn_folder)
-        layout.addLayout(file_btn_layout)
-
-        btn_clear = QPushButton("🗑️ Clear Selection")
-        btn_clear.clicked.connect(self.clear_selection)
-        btn_clear.setStyleSheet("color: #d32f2f; font-size: 11px; border: 1px solid #d32f2f;")
-        file_btn_layout.addWidget(btn_clear)
-
+        files_panel = QFrame()
+        files_panel.setObjectName("panel")
+        files_layout = QVBoxLayout(files_panel)
+        files_layout.setContentsMargins(12, 12, 12, 12)
+        files_layout.setSpacing(10)
+        file_buttons = QHBoxLayout()
+        file_button = QPushButton("Select file")
+        file_button.clicked.connect(self.select_files)
+        folder_button = QPushButton("Select folder")
+        folder_button.clicked.connect(self.select_folder)
+        file_buttons.addWidget(file_button)
+        file_buttons.addWidget(folder_button)
+        files_layout.addLayout(file_buttons)
+        self.file_list = QListWidget()
+        self.file_list.setAlternatingRowColors(True)
+        self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list.itemSelectionChanged.connect(
+            lambda: self.remove_file_button.setEnabled(bool(self.file_list.selectedItems()))
+        )
+        files_layout.addWidget(self.file_list, 1)
+        file_actions = QHBoxLayout()
+        self.remove_file_button = QPushButton("Remove selected")
+        self.remove_file_button.setEnabled(False)
+        self.remove_file_button.clicked.connect(self.remove_selected_files)
+        self.clear_files_button = QPushButton("Clear all")
+        self.clear_files_button.setObjectName("quietButton")
+        self.clear_files_button.clicked.connect(self.clear_selection)
+        file_actions.addWidget(self.remove_file_button)
+        file_actions.addStretch()
+        file_actions.addWidget(self.clear_files_button)
+        files_layout.addLayout(file_actions)
         self.file_list_label = QLabel("No files selected")
-        layout.addWidget(self.file_list_label)
+        self.file_list_label.setObjectName("muted")
+        files_layout.addWidget(self.file_list_label)
+        columns.addWidget(files_panel, 1, 0)
 
-        # Step 4: Select destination
-        layout.addWidget(QLabel("<br><b>Step 4: Select Destination Folder</b>"))
-        btn_dest = QPushButton("Select Destination")
-        btn_dest.clicked.connect(self.select_destination)
-        layout.addWidget(btn_dest)
+        names_panel = QFrame()
+        names_panel.setObjectName("panel")
+        names_layout = QVBoxLayout(names_panel)
+        names_layout.setContentsMargins(12, 12, 12, 12)
+        names_layout.setSpacing(10)
+        excel_button = QPushButton("Load from Excel")
+        excel_button.clicked.connect(self.load_excel)
+        names_layout.addWidget(excel_button)
 
-        self.selected_destination_label = QLabel("No destination selected")
-        layout.addWidget(self.selected_destination_label)
+        self.name_tabs = QTabWidget()
+        self.prof_input = QTextEdit()
+        self.prof_input.setPlaceholderText("Enter professor names, one per line")
+        self.name_input = QTextEdit()
+        self.name_input.setPlaceholderText("Enter student names, one per line")
+        self.id_input = QTextEdit()
+        self.id_input.setPlaceholderText("Enter student IDs, one per line")
+        self.name_tabs.addTab(self.prof_input, "Professor names")
+        self.name_tabs.addTab(self.name_input, "Student names")
+        self.name_tabs.addTab(self.id_input, "Student IDs")
+        names_layout.addWidget(self.name_tabs, 1)
+        columns.addWidget(names_panel, 1, 1)
+        layout.addLayout(columns, 1)
 
-        # De-identify button
-        self.process_btn = QPushButton("🚀 DE-IDENTIFY")
-        self.process_btn.clicked.connect(self.run_redaction)
-        self.process_btn.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; height: 40px;")
-        layout.addWidget(self.process_btn)
+        options = QGridLayout()
+        options.setHorizontalSpacing(14)
+        options.setVerticalSpacing(6)
+        prefix_label = QLabel("File naming scheme")
+        prefix_label.setObjectName("fieldLabel")
+        options.addWidget(prefix_label, 0, 0)
+        destination_label = QLabel("Destination path")
+        destination_label.setObjectName("fieldLabel")
+        options.addWidget(destination_label, 0, 1)
 
+        self.prefix_input = QLineEdit()
+        self.prefix_input.setPlaceholderText("Custom naming scheme (optional)")
+        options.addWidget(self.prefix_input, 1, 0)
+
+        destination_row = QHBoxLayout()
+        self.destination_input = QLineEdit()
+        self.destination_input.setReadOnly(True)
+        self.destination_input.setPlaceholderText("Uses the selected files' folder by default")
+        destination_row.addWidget(self.destination_input, 1)
+        destination_button = QPushButton("Browse")
+        destination_button.clicked.connect(self.select_destination)
+        destination_row.addWidget(destination_button)
+        options.addLayout(destination_row, 1, 1)
+        layout.addLayout(options)
+
+        footer = QHBoxLayout()
         self.progress = QProgressBar()
-        layout.addWidget(self.progress)
-        
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setFormat("Ready")
+        footer.addWidget(self.progress, 1)
+        self.process_btn = QPushButton("De-identify")
+        self.process_btn.setObjectName("primaryButton")
+        self.process_btn.clicked.connect(self.run_redaction)
+        footer.addWidget(self.process_btn)
+        layout.addLayout(footer)
+
+        self.setCentralWidget(page)
 
     # Opens a file dialog for the user to select an Excel file (.xlsx or .xls).
     # Reads the file, determines which columns contain names and IDs based on headers,
@@ -218,26 +289,55 @@ class RedactorApp(QMainWindow):
             if Path(f).suffix.lower() in allowed_extensions
         ]
 
-        # Add only supported files without duplicates
-        combined = set(self.selected_files) | set(valid_files)
-        self.selected_files = list(combined)
+        # Keep selection order stable while avoiding duplicate entries.
+        for file_path in valid_files:
+            if file_path not in self.selected_files:
+                self.selected_files.append(file_path)
 
+        self.update_file_selection()
+
+    def update_file_selection(self):
+        self.file_list.clear()
+        for file_path in self.selected_files:
+            self.file_list.addItem(Path(file_path).name)
+            self.file_list.item(self.file_list.count() - 1).setToolTip(file_path)
+
+        count = len(self.selected_files)
         self.file_list_label.setText(
-            f"Total files selected: {len(self.selected_files)}"
+            "No files selected" if count == 0 else
+            f"{count} file{'s' if count != 1 else ''} selected"
         )
-        
-        if not self.output_dir and self.selected_files:
+        self.remove_file_button.setEnabled(False)
+        self.clear_files_button.setEnabled(bool(count))
+
+        if not self.output_dir:
             self.temp_output_dir = (
                 Path(self.selected_files[0]).parent / "Redacted_Output"
+                if self.selected_files else None
             )
-            self.selected_destination_label.setText(
-                f"Default: {self.temp_output_dir}"
+            self.destination_input.clear()
+            self.destination_input.setPlaceholderText(
+                str(self.temp_output_dir) if self.temp_output_dir
+                else "Uses the selected files' folder by default"
             )
+
+    def remove_selected_files(self):
+        selected_rows = {
+            self.file_list.row(item) for item in self.file_list.selectedItems()
+        }
+        if not selected_rows:
+            return
+
+        self.selected_files = [
+            path for row, path in enumerate(self.selected_files)
+            if row not in selected_rows
+        ]
+        self.update_file_selection()
 
     # Clears the list of selected files and resets the label.
     def clear_selection(self):
         self.selected_files = []
-        self.file_list_label.setText("No files selected")
+        self.update_file_selection()
         
     # Parses pasted names/IDs into individual blacklist terms.
     # Supports newline, semicolon, tab separators and converts Last,First style names into full name terms.
@@ -280,7 +380,7 @@ class RedactorApp(QMainWindow):
         if folder_path:
             selected_folder = Path(folder_path)
             self.output_dir = selected_folder / "Redacted_Output"
-            self.selected_destination_label.setText(f"Destination: {self.output_dir}")
+            self.destination_input.setText(str(self.output_dir))
 
     # Starts the redaction process: collects names and IDs from text boxes,
     # checks for selected files, creates output directory, and processes each file.
@@ -320,6 +420,7 @@ class RedactorApp(QMainWindow):
         
         self.progress.setMaximum(len(self.selected_files))
         self.progress.setValue(0)
+        self.progress.setFormat("Processing: %p%")
 
         for i, f_path in enumerate(self.selected_files):
             try:
@@ -338,6 +439,7 @@ class RedactorApp(QMainWindow):
             self.progress.setValue(i + 1)
         
         QMessageBox.information(self, "Finished", f"Saved to: {final_output}")
+        self.progress.setFormat("Complete")
 
     # Replaces occurrences of a term in the text with [REDACTED], using fuzzy matching for similarity.
     # Handles single words or full names by looking for matches in the text.
