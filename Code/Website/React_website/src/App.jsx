@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { NavLink, Route, Routes, Navigate, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { api } from './api';
+import { api, setSessionLostHandler } from './api';
+import { SignInScreen, ForcedPasswordChange, ChangePasswordForm } from './Auth';
+import AdminPanel from './AdminPanel';
 import './App.css';
 
 const tools = [
@@ -1031,7 +1033,7 @@ function AnnotateTool({ uploadedFiles }) {
                   pointerEvents: 'none',
                   padding: '6px 10px',
                   borderRadius: '6px',
-                  backgroundColor: '#15253e',
+                  backgroundColor: '#6b1324',
                   color: 'white',
                 }}
               >
@@ -1408,7 +1410,7 @@ function DataVisualizationTool({ uploadedFiles }) {
               <XAxis dataKey="name" />
               <YAxis />
               <Tooltip />
-              <Bar dataKey="count" fill="#0f66d0" />
+              <Bar dataKey="count" fill="#981e32" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -1432,7 +1434,7 @@ function DataVisualizationTool({ uploadedFiles }) {
         });
         return point;
       });
-      const lineColors = ['#e14f56', '#0f66d0', '#238c2d', '#8700a8', '#e58a16'];
+      const lineColors = ['#981e32', '#5e6a71', '#238c2d', '#8700a8', '#e58a16'];
       return (
         <div style={{ width: '100%', height: 300 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -1479,7 +1481,7 @@ function DataVisualizationTool({ uploadedFiles }) {
         );
       }
       const maxFreq = Math.max(...wordData.map(w => w.value));
-      const colors = ['#a33338', '#238c2d', '#1768c4', '#8700a8', '#a33338', '#238c2d', '#1768c4'];
+      const colors = ['#981e32', '#238c2d', '#5e6a71', '#8700a8', '#981e32', '#238c2d', '#5e6a71'];
       return (
         <div className="wordcloud-container">
           {wordData.map((word, idx) => {
@@ -1548,7 +1550,7 @@ function DataVisualizationTool({ uploadedFiles }) {
             </select>
           </label>
           <p style={{ marginTop: '0.6rem' }}>Total matches: <strong>{results.length}</strong></p>
-          <div style={{ marginTop: '1.2rem', padding: '1rem', border: '1px solid #dbe3f8', borderRadius: '8px', background: '#f5f8ff' }}>
+          <div style={{ marginTop: '1.2rem', padding: '1rem', border: '1px solid #ecdcdf', borderRadius: '8px', background: '#fbf6f7' }}>
             {renderVisualization(chartType, results, queries, sourceText)}
           </div>
         </div>
@@ -1932,7 +1934,36 @@ function DocumentManager({
   );
 }
 
+// Decides what to show: sign-in, forced password change, or the app.
+// The server enforces every permission; hiding tabs here is only for convenience.
 export default function App() {
+  const [user, setUser] = useState(undefined); // undefined = checking, null = signed out
+
+  useEffect(() => {
+    api.me().then(r => setUser(r.user)).catch(() => setUser(null));
+    setSessionLostHandler((code) => {
+      if (code === 'PASSWORD_CHANGE_REQUIRED') setUser(u => (u ? { ...u, mustChangePassword: true } : u));
+      else { Object.keys(kwicCache).forEach(k => delete kwicCache[k]); setUser(null); }
+    });
+  }, []);
+
+  const signOut = async () => {
+    try { await api.logout(); } catch { /* already signed out */ }
+    // Drop saved KWIC searches/results so the next person on this computer can't see them.
+    Object.keys(kwicCache).forEach(k => delete kwicCache[k]);
+    setUser(null);
+  };
+
+  if (user === undefined) return <div className="auth-page"><p className="auth-loading">Loading…</p></div>;
+  if (user === null) return <SignInScreen onSignedIn={setUser} />;
+  if (user.mustChangePassword) return <ForcedPasswordChange user={user} onDone={setUser} onSignOut={signOut} />;
+  // key: a different account gets a fresh workspace (no leftover state from the previous user)
+  return <Workspace key={user.id} user={user} onUserChange={setUser} onSignOut={signOut} />;
+}
+
+function Workspace({ user, onUserChange, onSignOut }) {
+  const isAdmin = user.role === 'admin';
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [libraryStatus, setLibraryStatus] = useState({ loading: true, error: '' });
   const [corpora, setCorpora] = useState([]);
@@ -2013,10 +2044,11 @@ export default function App() {
         <div className="brand">WSU Corpus Analysis</div>
         <nav>
           <NavLink to="/dashboard" className={({ isActive }) => (isActive ? 'active' : '')}>Dashboard</NavLink>
-          <NavLink to="/document-manager" className={({ isActive }) => (isActive ? 'active' : '')}>Document Manager</NavLink>
+          {isAdmin && <NavLink to="/document-manager" className={({ isActive }) => (isActive ? 'active' : '')}>Document Manager</NavLink>}
           <NavLink to="/keyword-context" className={({ isActive }) => (isActive ? 'active' : '')}>Keyword in Context</NavLink>
           <NavLink to="/annotate" className={({ isActive }) => (isActive ? 'active' : '')}>Annotate</NavLink>
           <NavLink to="/data-visualization" className={({ isActive }) => (isActive ? 'active' : '')}>Data Visualization</NavLink>
+          {isAdmin && <NavLink to="/admin" className={({ isActive }) => (isActive ? 'active' : '')}>Admin</NavLink>}
         </nav>
         <div className="corpus-picker">
           <label>Corpus</label>
@@ -2029,7 +2061,27 @@ export default function App() {
             ))}
           </select>
         </div>
+        <div className="sidebar-account">
+          <div className="sidebar-account-name">{user.name}</div>
+          <div className="sidebar-account-email">{user.email}</div>
+          <span className={`role-badge ${user.role}`}>{isAdmin ? 'Admin' : 'User'}</span>
+          <div className="sidebar-account-actions">
+            <button type="button" onClick={() => setShowPasswordForm(true)}>Change password</button>
+            <button type="button" onClick={onSignOut}>Sign out</button>
+          </div>
+        </div>
       </aside>
+      {showPasswordForm && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Change password">
+          <div className="modal-card">
+            <h2>Change password</h2>
+            <p className="admin-muted">You'll stay signed in here; other devices are signed out.</p>
+            <ChangePasswordForm
+              onCancel={() => setShowPasswordForm(false)}
+              onDone={(u) => { setShowPasswordForm(false); onUserChange(u); }} />
+          </div>
+        </div>
+      )}
       <main className="main-content">
         <header className="page-header">
           <h1>Project Dashboard</h1>
@@ -2038,11 +2090,12 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/document-manager" element={
+          <Route path="/document-manager" element={isAdmin ? (
             <DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile} removeFile={removeFile}
               corpora={corpora} activeCorpusId={activeCorpusId}
               moveFile={moveFile} createCorpus={createCorpus} renameCorpus={renameCorpus} deleteCorpus={deleteCorpus} />
-          } />
+          ) : <Navigate to="/dashboard" replace />} />
+          <Route path="/admin" element={isAdmin ? <AdminPanel currentUser={user} /> : <Navigate to="/dashboard" replace />} />
           <Route path="/keyword-context" element={<KeywordContextTool uploadedFiles={scopedFiles} />} />
           <Route path="/annotate" element={<AnnotateTool uploadedFiles={scopedFiles} />} />
           <Route path="/data-visualization" element={<DataVisualizationTool uploadedFiles={scopedFiles} />} />
