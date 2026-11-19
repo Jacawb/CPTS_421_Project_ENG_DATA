@@ -40,25 +40,25 @@ class RedactorApp(QMainWindow):
     # Arranges everything in a vertical layout for the main window.
     def initUI(self):
         self.setStyleSheet("""
-            QMainWindow, QWidget#page { background: #f7f8fa; color: #172b4d; font-family: "Segoe UI"; font-size: 10pt; }
+            QMainWindow, QWidget#page { background: #f7f8fa; color: #172b4d; font-family: "Segoe UI"; font-size: 11pt; }
             QFrame#panel { background: #ffffff; border: 1px solid #c8d0d9; border-radius: 5px; }
             QLabel#pageTitle { color: #102a43; font-size: 17pt; font-weight: 700; }
-            QLabel#muted { color: #62748a; }
-            QLabel#sectionTitle { color: #173b63; font-size: 11pt; font-weight: 600; }
-            QLabel#fieldLabel { color: #344b63; font-weight: 600; }
+            QLabel#muted { color: #52677e; font-size: 10.5pt; }
+            QLabel#sectionTitle { color: #173b63; font-size: 12pt; font-weight: 600; }
+            QLabel#fieldLabel { color: #344b63; font-size: 11pt; font-weight: 600; }
             QTextEdit, QLineEdit, QListWidget {
                 background: #ffffff; border: 1px solid #c8d0d9; border-radius: 4px;
-                padding: 7px; selection-background-color: #dceaf6;
+                padding: 7px; font-size: 12pt; selection-background-color: #dceaf6;
             }
             QTextEdit:focus, QLineEdit:focus, QListWidget:focus { border: 1px solid #5181ad; }
-            QPushButton { background: #ffffff; color: #24415f; border: 1px solid #b9c5d1; border-radius: 4px; padding: 8px 12px; }
+            QPushButton { background: #ffffff; color: #24415f; border: 1px solid #b9c5d1; border-radius: 4px; padding: 8px 12px; font-size: 11pt; }
             QPushButton:hover { background: #f0f6fc; border-color: #8ba9c6; }
             QPushButton#primaryButton { background: #176b55; color: #ffffff; border: 1px solid #176b55; padding: 11px 30px; font-weight: 700; }
             QPushButton#primaryButton:hover { background: #125743; }
             QPushButton#quietButton { color: #596c80; background: transparent; border: none; }
             QPushButton#quietButton:hover { color: #a33b3b; background: #fff5f5; }
             QTabWidget::pane { border: 1px solid #c8d0d9; border-radius: 4px; background: #ffffff; }
-            QTabBar::tab { background: #edf1f5; color: #344b63; padding: 7px 13px; border: 1px solid #c8d0d9; }
+            QTabBar::tab { background: #edf1f5; color: #344b63; padding: 8px 13px; border: 1px solid #c8d0d9; font-size: 10.5pt; }
             QTabBar::tab:selected { background: #ffffff; color: #173b63; }
             QProgressBar { background: #e8eef5; border: none; border-radius: 4px; height: 9px; text-align: center; }
             QProgressBar::chunk { background: #2b8068; border-radius: 4px; }
@@ -185,6 +185,48 @@ class RedactorApp(QMainWindow):
         layout.addLayout(footer)
 
         self.setCentralWidget(page)
+        self._base_stylesheet = self.styleSheet()
+        self._responsive_layouts = [
+            (layout, (22, 18, 22, 18), 12),
+            (files_layout, (12, 12, 12, 12), 10),
+            (names_layout, (12, 12, 12, 12), 10),
+        ]
+        self._columns_layout = columns
+        self._applied_ui_scale = None
+        self._apply_ui_scale()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_base_stylesheet"):
+            self._apply_ui_scale()
+
+    def _apply_ui_scale(self):
+        scale = max(1.0, min(
+            1.5,
+            min(self.width() / 900, self.height() / 650)
+        ))
+        if self._applied_ui_scale is not None and abs(scale - self._applied_ui_scale) < 0.02:
+            return
+        self._applied_ui_scale = scale
+
+        def scale_style_value(match):
+            value = float(match.group(1)) * scale
+            unit = match.group(2)
+            if unit == "px":
+                return f"{round(value)}px"
+            return f"{value:.1f}pt"
+
+        self.setStyleSheet(re.sub(
+            r"(\d+(?:\.\d+)?)(pt|px)",
+            scale_style_value,
+            self._base_stylesheet
+        ))
+        for layout, margins, spacing in self._responsive_layouts:
+            layout.setContentsMargins(*(round(value * scale) for value in margins))
+            layout.setSpacing(round(spacing * scale))
+        self._columns_layout.setHorizontalSpacing(round(14 * scale))
+        self._columns_layout.setVerticalSpacing(round(8 * scale))
+        self._columns_layout.setVerticalSpacing(round(8 * scale))
 
     # Opens a file dialog for the user to select an Excel file (.xlsx or .xls).
     # Reads the file, determines which columns contain names and IDs based on headers,
