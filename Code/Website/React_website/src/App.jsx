@@ -1559,21 +1559,148 @@ function formatSavedDate(createdAt) {
 }
 
 function DocumentManager({
-  files, libraryStatus, saveFile, removeFile,
-  corpora, activeCorpusId, moveFile, createCorpus, renameCorpus, deleteCorpus,
+  files, libraryStatus, saveFile, removeFiles,
+  corpora, activeCorpusId, moveFiles, createCorpus, renameCorpus, deleteCorpus,
 }) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [newCorpus, setNewCorpus] = useState('');
+  const [selected, setSelected] = useState(() => new Set());
+  const anchorRef = useRef(null);          // last clicked id, for shift-range
+  const selectAllRef = useRef(null);
 
   const activeName = corpora.find(c => c.id === activeCorpusId)?.name ?? 'Unassigned';
+
+  // Saved-file list is grouped: one section per corpus, then Unassigned.
+  const sections = [
+    ...corpora.map(c => ({ id: c.id, name: c.name })),
+    { id: null, name: 'Unassigned' },
+  ];
+  // Visual order of rows (section by section) - shift-click ranges follow this.
+  const orderedFiles = useMemo(
+    () => sections.flatMap(s => files.filter(f => (f.corpus_id ?? null) === s.id)),
+    [files, corpora] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Drop ids of files that no longer exist (deleted, etc.).
+  useEffect(() => {
+    setSelected(prev => {
+      const live = new Set(files.map(f => f.id));
+      const next = new Set([...prev].filter(id => live.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [files]);
+
+  const allSelected = orderedFiles.length > 0 && selected.size === orderedFiles.length;
+  const someSelected = selected.size > 0 && !allSelected;
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
 
   const run = async (fn) => {
     setError('');
     try { await fn(); } catch (err) { setError(err.message); }
   };
 
+  // --- selection -----------------------------------------------------------
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(orderedFiles.map(f => f.id)));
+    anchorRef.current = null;
+  };
+
+  const selectSection = (sectionFiles, on) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      sectionFiles.forEach(f => (on ? next.add(f.id) : next.delete(f.id)));
+      return next;
+    });
+  };
+
+  // Click rules:
+  //   checkbox            -> toggle that file
+  //   Shift + click       -> select the range from the last clicked file
+  //   Ctrl/Cmd + click    -> toggle that file
+  //   plain click on row  -> select only that file
+  const handleRowClick = (e, file) => {
+    if (e.target.closest('button, select, a')) return;
+    const isCheckbox = e.target.type === 'checkbox';
+    const ids = orderedFiles.map(f => f.id);
+
+    if (e.shiftKey && anchorRef.current !== null && ids.includes(anchorRef.current)) {
+      window.getSelection()?.removeAllRanges();     // shift-click would also select page text
+      const a = ids.indexOf(anchorRef.current);
+      const b = ids.indexOf(file.id);
+      const range = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+      setSelected(prev => (e.ctrlKey || e.metaKey ? new Set([...prev, ...range]) : new Set(range)));
+      return;                                        // keep the anchor, like a file explorer
+    }
+    if (isCheckbox || e.ctrlKey || e.metaKey) {
+      setSelected(prev => {
+        const next = new Set(prev);
+        next.has(file.id) ? next.delete(file.id) : next.add(file.id);
+        return next;
+      });
+    } else {
+      setSelected(new Set([file.id]));
+    }
+    anchorRef.current = file.id;
+  };
+
+  const handleListKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      setSelected(new Set(orderedFiles.map(f => f.id)));
+    } else if (e.key === 'Escape') {
+      setSelected(new Set());
+    } else if (e.key === 'Delete' && selected.size > 0) {
+      bulkDelete();
+    }
+  };
+
+  // --- bulk actions --------------------------------------------------------
+  const summarize = (verb, ok, failed) => {
+    setStatus(ok > 0 ? `${verb} ${ok} file${ok !== 1 ? 's' : ''}.` : '');
+    setError(failed.length ? `Could not ${verb.toLowerCase().replace(/d$/, '')} ${failed.length} file(s): ${failed.join('; ')}` : '');
+  };
+
+  const bulkMove = async (value) => {
+    if (value === '__none__' || selected.size === 0 || busy) return;
+    const corpusId = value === '' ? null : Number(value);
+    const ids = [...selected].filter(id => {
+      const f = files.find(x => x.id === id);
+      return f && (f.corpus_id ?? null) !== corpusId;      // skip files already there
+    });
+    if (ids.length === 0) { setStatus('Selected files are already in that corpus.'); return; }
+    setBusy(true); setError(''); setStatus('');
+    try {
+      const { succeeded, failures } = await moveFiles(ids, corpusId);
+      const target = corpusId === null ? 'Unassigned' : corpora.find(c => c.id === corpusId)?.name;
+      summarize(`Moved to ${target}:`, succeeded.length, failures);
+      if (failures.length === 0) setSelected(new Set());
+    } catch (err) {
+      setError(err.message);
+    } finally { setBusy(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (selected.size === 0 || busy) return;
+    const n = selected.size;
+    const names = files.filter(f => selected.has(f.id)).slice(0, 5).map(f => `• ${f.name}`).join('\n');
+    const more = n > 5 ? `\n…and ${n - 5} more` : '';
+    if (!window.confirm(`Delete ${n} file${n !== 1 ? 's' : ''} and all of their annotations? This cannot be undone.\n\n${names}${more}`)) return;
+    setBusy(true); setError(''); setStatus('');
+    try {
+      const { succeeded, failures } = await removeFiles([...selected]);
+      summarize('Deleted', succeeded.length, failures);
+      setSelected(new Set(failures.length ? [...selected].filter(id => !succeeded.includes(id)) : []));
+    } catch (err) {
+      setError(err.message);
+    } finally { setBusy(false); }
+  };
+
+  // --- uploads (unchanged) -------------------------------------------------
   const loadFiles = async (selectedFiles) => {
     if (!selectedFiles || selectedFiles.length === 0) return;
     const validFiles = Array.from(selectedFiles).filter(file =>
@@ -1597,17 +1724,6 @@ function DocumentManager({
     setStatus(savedCount > 0 ? `Saved ${savedCount} file(s)` : '');
     setError(failures.length > 0 ? `Could not save: ${failures.join('; ')}` : '');
     setLoading(false);
-  };
-
-  const deleteFile = async (file) => {
-    if (!window.confirm(`Delete "${file.name}" and all of its annotations? This cannot be undone.`)) return;
-    setError(''); setStatus('');
-    try {
-      await removeFile(file.id);
-      setStatus(`Deleted ${file.name}`);
-    } catch (err) {
-      setError(`Could not delete ${file.name}: ${err.message}`);
-    }
   };
 
   const loadFromUrl = async (url, name) => {
@@ -1666,12 +1782,6 @@ function DocumentManager({
     script.onerror = () => setError('Failed to load the OneDrive picker script.');
     document.body.appendChild(script);
   };
-
-  // Saved-file list is grouped: one section per corpus, then Unassigned.
-  const sections = [
-    ...corpora.map(c => ({ id: c.id, name: c.name })),
-    { id: null, name: 'Unassigned' },
-  ];
 
   return (
     <ToolPage title="Document Manager" subtitle="Upload documents to save them for the keyword and annotation tools. Saved documents stay after a refresh.">
@@ -1744,31 +1854,75 @@ function DocumentManager({
         {libraryStatus.loading && <p>Loading saved documents...</p>}
         {libraryStatus.error && <div className="error">{libraryStatus.error}</div>}
         {!libraryStatus.loading && !libraryStatus.error && files.length === 0 && <p>No documents saved yet.</p>}
-        {sections.map(s => {
-          const inSection = files.filter(f => (f.corpus_id ?? null) === s.id);
-          if (inSection.length === 0) return null;
-          return (
-            <div key={s.id ?? 'none'}>
-              <h4>{s.name} ({inSection.length})</h4>
-              <ul className="saved-file-list">
-                {inSection.map(file => (
-                  <li key={file.id}>
-                    <span className="file-name">{file.name}</span>
-                    <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
-                    <select
-                      value={file.corpus_id ?? ''}
-                      onChange={e => run(() => moveFile(file.id, e.target.value ? Number(e.target.value) : null))}
-                    >
-                      <option value="">Unassigned</option>
-                      {corpora.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                    <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
+
+        {files.length > 0 && (
+          <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
+            <label className="bulk-select-all">
+              <input ref={selectAllRef} type="checkbox" checked={allSelected} onChange={toggleAll} />
+              {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
+            </label>
+            {selected.size > 0 && (
+              <>
+                <select
+                  value="__none__"
+                  onChange={e => bulkMove(e.target.value)}
+                  disabled={busy}
+                  aria-label="Move selected files to corpus"
+                >
+                  <option value="__none__" disabled>Move to…</option>
+                  <option value="">Unassigned</option>
+                  {corpora.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button type="button" className="bulk-delete" onClick={bulkDelete} disabled={busy}>
+                  {busy ? 'Working…' : `Delete ${selected.size}`}
+                </button>
+                <button type="button" className="annotate-item-delete" onClick={() => setSelected(new Set())} disabled={busy}>
+                  Clear
+                </button>
+              </>
+            )}
+            <span className="bulk-hint">Shift-click selects a range · Ctrl/⌘-click toggles one</span>
+          </div>
+        )}
+
+        <div onKeyDown={handleListKeyDown} tabIndex={-1} className="selectable-list">
+          {sections.map(s => {
+            const inSection = files.filter(f => (f.corpus_id ?? null) === s.id);
+            if (inSection.length === 0) return null;
+            const selectedHere = inSection.filter(f => selected.has(f.id)).length;
+            return (
+              <div key={s.id ?? 'none'}>
+                <h4 className="section-heading">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select all in ${s.name}`}
+                    checked={selectedHere === inSection.length}
+                    ref={el => { if (el) el.indeterminate = selectedHere > 0 && selectedHere < inSection.length; }}
+                    onChange={e => selectSection(inSection, e.target.checked)}
+                  />
+                  {s.name} ({inSection.length})
+                </h4>
+                <ul className="saved-file-list">
+                  {inSection.map(file => {
+                    const isSel = selected.has(file.id);
+                    return (
+                      <li
+                        key={file.id}
+                        className={`selectable-row${isSel ? ' selected' : ''}`}
+                        aria-selected={isSel}
+                        onClick={(e) => handleRowClick(e, file)}
+                      >
+                        <input type="checkbox" checked={isSel} onChange={() => {}} aria-label={`Select ${file.name}`} />
+                        <span className="file-name">{file.name}</span>
+                        <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </ToolPage>
   );
@@ -1850,9 +2004,23 @@ function Workspace({ user, onUserChange, onSignOut }) {
     setUploadedFiles(prev => [{ ...saved, content }, ...prev]);
   };
 
-  const moveFile = async (fileId, corpusId) => {
-    await api.setFileCorpus(fileId, corpusId);
-    setUploadedFiles(prev => prev.map(f => f.id === fileId ? { ...f, corpus_id: corpusId } : f));
+  // The server returns the ids it actually changed; anything missing was already gone.
+  const missing = (ids, done) => ids
+    .filter(id => !done.has(id))
+    .map(id => `${uploadedFiles.find(f => f.id === id)?.name ?? id} (not found)`);
+
+  const moveFiles = async (ids, corpusId) => {
+    const { ids: changed } = await api.bulkMoveFiles(ids, corpusId);
+    const done = new Set(changed);
+    setUploadedFiles(prev => prev.map(f => done.has(f.id) ? { ...f, corpus_id: corpusId } : f));
+    return { succeeded: changed, failures: missing(ids, done) };
+  };
+
+  const removeFiles = async (ids) => {
+    const { ids: changed } = await api.bulkDeleteFiles(ids);
+    const done = new Set(changed);
+    setUploadedFiles(prev => prev.filter(f => !done.has(f.id)));
+    return { succeeded: changed, failures: missing(ids, done) };
   };
 
   const createCorpus = async (name) => {
@@ -1871,11 +2039,6 @@ function Workspace({ user, onUserChange, onSignOut }) {
     setCorpora(prev => prev.filter(c => c.id !== id));
     setUploadedFiles(prev => prev.map(f => f.corpus_id === id ? { ...f, corpus_id: null } : f));
     if (activeCorpusId === id) changeCorpus(null);
-  };
-
-  const removeFile = async (id) => {
-    await api.deleteFile(id);
-    setUploadedFiles(prev => prev.filter(f => f.id !== id));
   };
 
   return (
@@ -1934,9 +2097,10 @@ function Workspace({ user, onUserChange, onSignOut }) {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/document-manager" element={isAdmin ? (
-            <DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile} removeFile={removeFile}
+            <DocumentManager files={uploadedFiles} libraryStatus={libraryStatus} saveFile={saveFile}
+              removeFiles={removeFiles} moveFiles={moveFiles}
               corpora={corpora} activeCorpusId={activeCorpusId}
-              moveFile={moveFile} createCorpus={createCorpus} renameCorpus={renameCorpus} deleteCorpus={deleteCorpus} />
+              createCorpus={createCorpus} renameCorpus={renameCorpus} deleteCorpus={deleteCorpus} />
           ) : <Navigate to="/dashboard" replace />} />
           <Route path="/admin" element={isAdmin ? <AdminPanel currentUser={user} /> : <Navigate to="/dashboard" replace />} />
           <Route path="/keyword-context" element={<KeywordContextTool uploadedFiles={scopedFiles} />} />

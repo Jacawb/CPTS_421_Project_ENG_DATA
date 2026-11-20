@@ -47,7 +47,8 @@ export const api = {
   listFilesWithContent: () => request('/files?content=1'),
   uploadFile: (name, content, corpusId = null) => request('/files', { method: 'POST', body: { name, content, corpusId } }),
   deleteFile: (id) => request(`/files/${id}`, { method: 'DELETE' }),
-
+  bulkMoveFiles: (ids, corpusId) => request('/files/bulk', { method: 'POST', body: { action: 'move', ids, corpusId } }),
+  bulkDeleteFiles: (ids) => request('/files/bulk', { method: 'POST', body: { action: 'delete', ids } }),
   setFileCorpus: (id, corpusId) => request(`/files/${id}`, { method: 'PATCH', body: { corpusId } }),
   listCorpora: () => request('/corpora'),
   createCorpus: (name) => request('/corpora', { method: 'POST', body: { name } }),

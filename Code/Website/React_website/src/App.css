@@ -100,6 +100,28 @@
   background: #ffffff;
 }
 
+.bulk-bar {
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 1;
+  padding: 0.5rem 0.75rem; margin: 0.5rem 0;
+  background: #fbf6f7; border: 1px solid #ecdcdf; border-radius: 6px;
+}
+.bulk-select-all { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.bulk-hint { margin-left: auto; font-size: 0.8rem; color: #666; }
+.bulk-delete { background: #981e32; color: #fff; border: 0; border-radius: 4px; padding: 0.35rem 0.8rem; cursor: pointer; }
+.bulk-delete:disabled { opacity: 0.6; cursor: default; }
+
+.selectable-list { outline: none; }
+.section-heading { display: flex; align-items: center; gap: 0.5rem; }
+.selectable-row {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.4rem 0.75rem; cursor: pointer; user-select: none;
+  border-left: 3px solid transparent;
+}
+.selectable-row:hover { background: #f6eef0; }
+.selectable-row.selected { background: #f3dde1; border-left-color: #981e32; }
+.selectable-row .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .main-content {
   background: var(--bg);
   padding: 1.5rem;

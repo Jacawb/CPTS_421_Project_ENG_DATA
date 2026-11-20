@@ -447,6 +447,46 @@ export const onRequest = async ({ request, env }: { request: Request; env: Env }
         return json({ id: row!.id, name, size_bytes: sizeBytes, corpus_id: corpusId, created_at: row!.created_at }, 201);
       }
 
+            // POST /api/files/bulk
+      // body: { action: "move", ids: number[], corpusId: number | null }
+      //    or { action: "delete", ids: number[] }
+      // Returns { ids } = the files that were actually changed (ids that no longer exist are skipped).
+      if (parts.length === 2 && parts[1] === "bulk" && method === "POST") {
+        const b = await readJson<{ action?: string; ids?: unknown; corpusId?: number | null }>(request);
+        const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map(Number))].filter(Number.isInteger) : [];
+        if (ids.length === 0) return err("No files selected");
+        if (ids.length > 1000) return err("Too many files at once (max 1000)");
+        const idsJson = JSON.stringify(ids);
+
+        if (b.action === "move") {
+          const corpusId = b.corpusId == null ? null : Number(b.corpusId);
+          if (corpusId !== null) {
+            if (!Number.isInteger(corpusId)) return err("Bad corpus id");
+            const exists = await env.DB.prepare("SELECT 1 AS ok FROM corpora WHERE id = ?").bind(corpusId).first();
+            if (!exists) return err("Corpus not found", 404);
+          }
+          const { results } = await env.DB
+            .prepare("UPDATE files SET corpus_id = ? WHERE id IN (SELECT value FROM json_each(?)) RETURNING id")
+            .bind(corpusId, idsJson).all<{ id: number }>();
+          await audit(env, me.id, "files_moved", `${results.length} file(s) -> ${corpusId === null ? "unassigned" : `corpus #${corpusId}`}`).run();
+          return json({ ids: results.map(r => r.id) });
+        }
+
+        if (b.action === "delete") {
+          const [del] = await env.DB.batch([
+            env.DB.prepare("DELETE FROM files WHERE id IN (SELECT value FROM json_each(?)) RETURNING id, name").bind(idsJson), // cascades to annotations
+            env.DB.prepare("DELETE FROM annotation_groups WHERE id NOT IN (SELECT DISTINCT group_id FROM annotations)"),
+          ]);
+          const deleted = del.results as { id: number; name: string }[];
+          if (deleted.length > 0) {
+            await audit(env, me.id, "files_deleted", deleted.map(f => `#${f.id} ${f.name}`).join(", ").slice(0, 1000)).run();
+          }
+          return json({ ids: deleted.map(f => f.id) });
+        }
+
+        return err("action must be move or delete");
+      }
+
       const fileId = Number(parts[1]);
       if (!Number.isInteger(fileId)) return err("Bad file id");
 
