@@ -45,6 +45,61 @@
   color: white;
 }
 
+/* ---------- Corpus picker ---------- */
+.corpus-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid #86283a;
+}
+
+.corpus-picker label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #e3b6be;
+}
+
+.corpus-picker select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #f7e4e7;
+  background-color: rgba(255, 255, 255, 0.08);
+  /* custom chevron */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23f7e4e7' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.5rem;
+  padding: 0.6rem 2rem 0.6rem 0.8rem;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.corpus-picker select:hover {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.corpus-picker select:focus-visible {
+  outline: 2px solid #f7e4e7;
+  outline-offset: 2px;
+}
+
+/* Dropdown list items (the native popup is light, so keep text readable) */
+.corpus-picker select option {
+  color: var(--text);
+  background: #ffffff;
+}
+
 .main-content {
   background: var(--bg);
   padding: 1.5rem;
