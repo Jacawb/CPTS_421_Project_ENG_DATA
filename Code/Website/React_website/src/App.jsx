@@ -807,10 +807,6 @@ function AnnotateTool({ uploadedFiles }) {
       setAnnotateError(`Could not remove annotation: ${err.message}`);
       return;
     }
-    // setTags(prev => prev
-    //   .map(t => t.id === tagId ? { ...t, ranges: t.ranges.filter(r => r.id !== rangeId) } : t)
-    //   .filter(t => t.ranges.length > 0)
-    // );
     setTags(prev => prev.map(t => t.id === tagId
       ? { ...t, total: t.total - 1, ranges: t.ranges.filter(r => r.id !== rangeId) }
       : t));
@@ -818,22 +814,6 @@ function AnnotateTool({ uploadedFiles }) {
   };
 
   // Removes this tag's annotations from the selected files.
-  // const deleteTag = async (tag) => {
-  //   const count = tag.ranges.length;
-  //   if (!window.confirm(`Delete the tag "${tag.note}" and its ${count} annotation${count !== 1 ? 's' : ''}?`)) return;
-  //   setAnnotateError('');
-  //   const results = await Promise.allSettled(tag.ranges.map(r => api.deleteAnnotation(r.id)));
-  //   const failedIds = new Set(tag.ranges.filter((r, i) => results[i].status === 'rejected').map(r => r.id));
-  //   setTags(prev => prev
-  //     .map(t => t.id === tag.id ? { ...t, ranges: t.ranges.filter(r => failedIds.has(r.id)) } : t)
-  //     .filter(t => t.ranges.length > 0)
-  //   );
-  //   if (failedIds.size > 0) {
-  //     setAnnotateError(`Could not delete ${failedIds.size} annotation(s) from "${tag.note}".`);
-  //   } else if (activeTagId === tag.id) {
-  //     clearActiveSelection();
-  //   }
-  // };
   const deleteTag = async (tag) => {
     if (!window.confirm(`Delete the tag "${tag.note}" everywhere? This removes all ${tag.total} of its annotations across every file.`)) return;
     setAnnotateError('');
@@ -1578,146 +1558,6 @@ function formatSavedDate(createdAt) {
   return new Date(`${createdAt.replace(' ', 'T')}Z`).toLocaleDateString();
 }
 
-// function DocumentManager({ files, libraryStatus, saveFile, removeFile }) {
-//   const [status, setStatus] = useState('');
-//   const [error, setError] = useState('');
-//   const [loading, setLoading] = useState(false);
-//
-//   const loadFiles = async (selectedFiles) => {
-//     if (!selectedFiles || selectedFiles.length === 0) return;
-//     const validFiles = Array.from(selectedFiles).filter(file =>
-//       file.type.includes('text') || file.name.endsWith('.txt')
-//     );
-//     if (validFiles.length === 0) {
-//       setError('Please select only plain text (.txt) files.');
-//       return;
-//     }
-//     setLoading(true);
-//     setStatus(`Saving ${validFiles.length} file(s)...`);
-//     const failures = [];
-//     for (const file of validFiles) {
-//       try {
-//         await saveFile(file.name, await readFileAsText(file));
-//       } catch (err) {
-//         failures.push(`${file.name} (${err.message})`);
-//       }
-//     }
-//     const savedCount = validFiles.length - failures.length;
-//     setStatus(savedCount > 0 ? `Saved ${savedCount} file(s)` : '');
-//     setError(failures.length > 0 ? `Could not save: ${failures.join('; ')}` : '');
-//     setLoading(false);
-//   };
-
-//   const deleteFile = async (file) => {
-//     if (!window.confirm(`Delete "${file.name}" and all of its annotations? This cannot be undone.`)) return;
-//     setError(''); setStatus('');
-//     try {
-//       await removeFile(file.id);
-//       setStatus(`Deleted ${file.name}`);
-//     } catch (err) {
-//       setError(`Could not delete ${file.name}: ${err.message}`);
-//     }
-//   };
-
-//   const loadFromUrl = async (url, name) => {
-//     setLoading(true);
-//     setError('');
-//     setStatus('Loading document from OneDrive...');
-//     try {
-//       const response = await fetch(url);
-//       if (!response.ok) throw new Error(`Fetch failed with ${response.status}`);
-//       const text = await response.text();
-//       await saveFile(name, text);
-//       setStatus(`Saved OneDrive file: ${name}`);
-//     } catch (err) {
-//       setError(`Unable to load file from OneDrive: ${err.message}`);
-//     } finally {
-//       setLoading(false);
-//     }
-//   };
-
-//   const onSelectFile = (event) => {
-//     setError(''); setStatus('');
-//     loadFiles(event.target.files);
-//   };
-
-//   const onDrop = (event) => {
-//     event.preventDefault();
-//     setError(''); setStatus('');
-//     loadFiles(event.dataTransfer.files);
-//   };
-
-//   const openOneDrivePicker = () => {
-//     setError('');
-//     const initPicker = () => {
-//       if (!window.OneDrive?.open) { setError('OneDrive picker is not available.'); return; }
-//       window.OneDrive.open({
-//         clientId: '<YOUR_ONEDRIVE_APP_CLIENT_ID>',
-//         action: 'download',
-//         multiSelect: false,
-//         advanced: { filter: '.txt', redirectUri: window.location.origin },
-//         success: (files) => {
-//           const selected = Array.isArray(files) ? files : files?.value || [];
-//           if (!selected.length) { setError('No file selected from OneDrive.'); return; }
-//           const file = selected[0];
-//           const downloadUrl = file['@microsoft.graph.downloadUrl'] || file.downloadUrl || file.url || file.webUrl;
-//           if (!downloadUrl) { setError('Unable to get a download URL for the selected file.'); return; }
-//           loadFromUrl(downloadUrl, file.name || 'OneDrive document');
-//         },
-//         cancel: () => setStatus('OneDrive picker closed.'),
-//         error: (err) => setError(`OneDrive picker error: ${err?.message || JSON.stringify(err)}`),
-//       });
-//     };
-//     if (window.OneDrive) { initPicker(); return; }
-//     const script = document.createElement('script');
-//     script.src = 'https://js.live.net/v7.2/OneDrive.js';
-//     script.onload = initPicker;
-//     script.onerror = () => setError('Failed to load the OneDrive picker script.');
-//     document.body.appendChild(script);
-//   };
-
-//   return (
-//     <ToolPage title="Document Manager" subtitle="Upload documents to save them for the keyword and annotation tools. Saved documents stay after a refresh.">
-//       <div className="doc-manager-grid">
-//         <div className="doc-manager-card" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
-//           <h3>Local files</h3>
-//           <p>Upload one or more plain text documents from your computer.</p>
-//           <input type="file" accept=".txt,text/plain" onChange={onSelectFile} multiple disabled={loading} />
-//         </div>
-//         <div className="doc-manager-card">
-//           <h3>OneDrive</h3>
-//           <p>Choose a text file from OneDrive for searching and review.</p>
-//           <button type="button" className="run-search" onClick={openOneDrivePicker} disabled={loading}>
-//             {loading ? 'Loading...' : 'Select from OneDrive'}
-//           </button>
-//         </div>
-//       </div>
-//       <div className="doc-manager-status">
-//         {status && <div className="status-message">{status}</div>}
-//         {error && <div className="error">{error}</div>}
-//       </div>
-
-//       <div className="doc-manager-card doc-manager-saved">
-//         <h3>Saved documents ({files.length})</h3>
-//         {libraryStatus.loading && <p>Loading saved documents...</p>}
-//         {libraryStatus.error && <div className="error">{libraryStatus.error}</div>}
-//         {!libraryStatus.loading && !libraryStatus.error && files.length === 0 && <p>No documents saved yet.</p>}
-//         {files.length > 0 && (
-//           <ul className="saved-file-list">
-//             {files.map(file => (
-//               <li key={file.id}>
-//                 <span className="file-name">{file.name}</span>
-//                 <span className="saved-file-meta">{formatFileSize(file.size_bytes)} · {formatSavedDate(file.created_at)}</span>
-//                 <button type="button" className="annotate-item-delete" onClick={() => deleteFile(file)}>Delete</button>
-//               </li>
-//             ))}
-//           </ul>
-//         )}
-//       </div>
-//     </ToolPage>
-//   );
-// }
-
 function DocumentManager({
   files, libraryStatus, saveFile, removeFile,
   corpora, activeCorpusId, moveFile, createCorpus, renameCorpus, deleteCorpus,
@@ -2042,16 +1882,9 @@ function Workspace({ user, onUserChange, onSignOut }) {
     <div className="layout">
       <aside className="sidebar">
         <div className="brand">WSU Corpus Analysis</div>
-        <nav>
-          <NavLink to="/dashboard" className={({ isActive }) => (isActive ? 'active' : '')}>Dashboard</NavLink>
-          {isAdmin && <NavLink to="/document-manager" className={({ isActive }) => (isActive ? 'active' : '')}>Document Manager</NavLink>}
-          <NavLink to="/keyword-context" className={({ isActive }) => (isActive ? 'active' : '')}>Keyword in Context</NavLink>
-          <NavLink to="/annotate" className={({ isActive }) => (isActive ? 'active' : '')}>Annotate</NavLink>
-          <NavLink to="/data-visualization" className={({ isActive }) => (isActive ? 'active' : '')}>Data Visualization</NavLink>
-          {isAdmin && <NavLink to="/admin" className={({ isActive }) => (isActive ? 'active' : '')}>Admin</NavLink>}
-        </nav>
+
         <div className="corpus-picker">
-          <label>Corpus</label>
+          <label>Selected Corpus</label>
           <select value={activeCorpusId ?? ''} onChange={e => changeCorpus(e.target.value ? Number(e.target.value) : null)}>
             <option value="">Unassigned ({uploadedFiles.filter(f => f.corpus_id == null).length})</option>
             {corpora.map(c => (
@@ -2061,6 +1894,16 @@ function Workspace({ user, onUserChange, onSignOut }) {
             ))}
           </select>
         </div>
+
+        <nav>
+          <NavLink to="/dashboard" className={({ isActive }) => (isActive ? 'active' : '')}>Dashboard</NavLink>
+          {isAdmin && <NavLink to="/document-manager" className={({ isActive }) => (isActive ? 'active' : '')}>Document Manager</NavLink>}
+          <NavLink to="/keyword-context" className={({ isActive }) => (isActive ? 'active' : '')}>Keyword in Context</NavLink>
+          <NavLink to="/annotate" className={({ isActive }) => (isActive ? 'active' : '')}>Annotate</NavLink>
+          <NavLink to="/data-visualization" className={({ isActive }) => (isActive ? 'active' : '')}>Data Visualization</NavLink>
+          {isAdmin && <NavLink to="/admin" className={({ isActive }) => (isActive ? 'active' : '')}>Admin</NavLink>}
+        </nav>
+        
         <div className="sidebar-account">
           <div className="sidebar-account-name">{user.name}</div>
           <div className="sidebar-account-email">{user.email}</div>
